@@ -126,7 +126,7 @@
     </div>
   </section>
 
-  <footer>Prices and market caps from Yahoo Finance, index lists from NSE. BSE-only means listed on BSE but not on NSE; REITs and InvITs are left out. Updated automatically every weekday at 4:30 PM IST. Not investment advice. Symbols open on TradingView.</footer>
+  <footer>Prices and market caps from Yahoo Finance, index lists from NSE. BSE-only means listed on BSE but not on NSE; REITs and InvITs are left out. <span id="bse-asof"></span> Updated automatically every weekday at 4:30 PM IST. Not investment advice. Symbols open on TradingView.</footer>
 </main>
 
 <script>
@@ -259,6 +259,7 @@
       $('short').textContent = n0.format(m.too_short + (m.bse_too_short || 0));
       if (m.bse_universe != null) { $('universe').textContent = n0.format(m.universe + m.bse_universe); $('bse-n').textContent = `${n0.format(m.universe)} NSE + ${n0.format(m.bse_universe)} BSE-only · `; }
       if (m.bse_min_cr) $('bse-min').textContent = n0.format(m.bse_min_cr);
+      if (m.bse_list_at) $('bse-asof').textContent = 'BSE list and market caps as of ' + new Date(m.bse_list_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) + '.';
       if (m.bse_ok === false) $('f-bse').title = 'BSE data did not load in the last scan';
       draw();
     })

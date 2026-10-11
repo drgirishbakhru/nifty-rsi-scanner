@@ -202,9 +202,28 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
     micro = set(read_list("microcap250")["SYMBOL"])
 
     # BSE-only stocks above the market-cap floor. A failure here keeps the NSE results.
-    bse_rows, bse_n, bse_fetched, bse_skipped, bse_ok = [], 0, 0, 0, True
+    # Yahoo's screener (market caps) often refuses cloud servers, so the last good lists are cached
+    # next to the results and reused when a lookup fails.
+    cache_path = os.path.join(args.dashboard, "universe_cache.json")
     try:
-        bse = bse_only_universe(args.bse_min_cr)
+        with open(cache_path) as f:
+            cache = json.load(f)
+    except (OSError, ValueError):
+        cache = {}
+
+    bse_rows, bse_n, bse_fetched, bse_skipped, bse_ok = [], 0, 0, 0, True
+    bse_list_at = None
+    try:
+        try:
+            bse = bse_only_universe(args.bse_min_cr)
+            cache["bse"] = {"at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                            "min_cr": args.bse_min_cr, "stocks": {k: list(v) for k, v in bse.items()}}
+        except Exception as e:  # noqa: BLE001
+            if not cache.get("bse") or cache["bse"].get("min_cr") != args.bse_min_cr:
+                raise
+            print(f"BSE list lookup failed ({e}); using the list saved {cache['bse']['at']}", file=sys.stderr)
+            bse = {k: tuple(v) for k, v in cache["bse"]["stocks"].items()}
+        bse_list_at = cache["bse"]["at"]
         bse_n = len(bse)
         print(f"BSE-only universe (>= {args.bse_min_cr:.0f} cr): {bse_n} symbols", file=sys.stderr)
         bse_closes = fetch_monthly(sorted(bse), suffix=".BO")
@@ -214,12 +233,16 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
         print(f"BSE scan failed: {e}", file=sys.stderr)
         bse, bse_ok = {}, False
 
-    nse_mcap = {}
     try:
         nse_mcap = {x["symbol"].removesuffix(".NS"): round(x.get("marketCap", 0) / 1e7)
                     for x in yahoo_screen("NSI", 1)}
+        cache["nse_mcap"] = {"at": datetime.now().astimezone().isoformat(timespec="seconds"), "mcap": nse_mcap}
     except Exception as e:  # noqa: BLE001
-        print(f"NSE market caps unavailable: {e}", file=sys.stderr)
+        print(f"NSE market cap lookup failed ({e}); using saved values", file=sys.stderr)
+        nse_mcap = cache.get("nse_mcap", {}).get("mcap", {})
+    os.makedirs(args.dashboard, exist_ok=True)
+    with open(cache_path, "w") as f:
+        json.dump(cache, f)
 
     print("Fetching weekly bars for the hits...", file=sys.stderr)
     weekly = {("NSE", k): v for k, v in fetch_monthly([r["Symbol"] for r in rows], interval="1wk", period="10y").items()}
@@ -252,7 +275,7 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
         "rsi_length": args.length, "level": args.level, "min_bars": args.min_bars,
         "universe": universe_n, "fetched": fetched_n, "too_short": skipped_n,
         "total_market_size": len(tm),
-        "bse_ok": bse_ok, "bse_min_cr": args.bse_min_cr, "bse_universe": bse_n,
+        "bse_ok": bse_ok, "bse_list_at": bse_list_at, "bse_min_cr": args.bse_min_cr, "bse_universe": bse_n,
         "bse_fetched": bse_fetched, "bse_too_short": bse_skipped,
     }]
     os.makedirs(args.dashboard, exist_ok=True)

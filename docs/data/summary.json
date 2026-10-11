@@ -1,6 +1,6 @@
 [
  {
-  "scanned_at": "2026-10-11T18:49:14+05:30",
+  "scanned_at": "2026-10-11T18:51:39+05:30",
   "month": "2026-10",
   "rsi_length": 14,
   "level": 70,
@@ -9,7 +9,8 @@
   "fetched": 2571,
   "too_short": 542,
   "total_market_size": 755,
-  "bse_ok": false,
+  "bse_ok": true,
+  "bse_list_at": "2026-10-11T18:51:30+05:30",
   "bse_min_cr": 1000,
   "bse_universe": 0,
   "bse_fetched": 0,
