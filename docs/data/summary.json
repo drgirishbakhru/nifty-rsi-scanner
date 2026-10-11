@@ -1,0 +1,13 @@
+[
+ {
+  "scanned_at": "2026-10-11T18:20:46+05:30",
+  "month": "2026-10",
+  "rsi_length": 14,
+  "level": 70,
+  "min_bars": 24,
+  "universe": 2574,
+  "fetched": 2571,
+  "too_short": 542,
+  "total_market_size": 755
+ }
+]
