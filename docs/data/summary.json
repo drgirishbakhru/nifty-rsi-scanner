@@ -1,6 +1,6 @@
 [
  {
-  "scanned_at": "2026-10-11T18:51:39+05:30",
+  "scanned_at": "2026-10-11T18:56:19+05:30",
   "month": "2026-10",
   "rsi_length": 14,
   "level": 70,
@@ -12,8 +12,8 @@
   "bse_ok": true,
   "bse_list_at": "2026-10-11T18:51:30+05:30",
   "bse_min_cr": 1000,
-  "bse_universe": 0,
-  "bse_fetched": 0,
-  "bse_too_short": 0
+  "bse_universe": 59,
+  "bse_fetched": 59,
+  "bse_too_short": 12
  }
 ]
