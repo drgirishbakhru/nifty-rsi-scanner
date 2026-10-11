@@ -1,6 +1,6 @@
 [
  {
-  "scanned_at": "2026-10-11T18:56:19+05:30",
+  "scanned_at": "2026-10-11T19:12:59+05:30",
   "month": "2026-10",
   "rsi_length": 14,
   "level": 70,
@@ -10,8 +10,10 @@
   "too_short": 542,
   "total_market_size": 755,
   "bse_ok": true,
-  "bse_list_at": "2026-10-11T18:51:30+05:30",
+  "bse_list_at": "2026-10-11T19:12:52+05:30",
   "bse_min_cr": 1000,
+  "min_mcap_cr": 1000,
+  "small_excluded": 19,
   "bse_universe": 59,
   "bse_fetched": 59,
   "bse_too_short": 12

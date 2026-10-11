@@ -81,7 +81,7 @@
   <header>
     <h1>Monthly RSI above 70</h1>
     <p class="take" id="take">Loading the latest scan…</p>
-    <p class="meta">RSI(14), Wilder's method, on monthly closes of every NSE stock in the EQ/BE series, plus BSE-only stocks above ₹<span id="bse-min">1,000</span> cr market cap when BSE is switched on. The current month's candle is still open, so the list can change until the last trading day. Last scan: <span id="scanned">—</span>.</p>
+    <p class="meta">RSI(14), Wilder's method, on monthly closes of NSE stocks in the EQ/BE series, plus BSE-only stocks when BSE is switched on. Only stocks with a market cap of ₹<span id="bse-min">1,000</span> cr or more are listed<span id="small-n"></span>. The current month's candle is still open, so the list can change until the last trading day. Last scan: <span id="scanned">—</span>.</p>
   </header>
 
   <section class="tiles">
@@ -258,6 +258,7 @@
       $('universe').textContent = n0.format(m.universe);
       $('short').textContent = n0.format(m.too_short + (m.bse_too_short || 0));
       if (m.bse_universe != null) { $('universe').textContent = n0.format(m.universe + m.bse_universe); $('bse-n').textContent = `${n0.format(m.universe)} NSE + ${n0.format(m.bse_universe)} BSE-only · `; }
+      if (m.small_excluded) $('small-n').textContent = ` (${n0.format(m.small_excluded)} smaller stocks above 70 left out)`;
       if (m.bse_min_cr) $('bse-min').textContent = n0.format(m.bse_min_cr);
       if (m.bse_list_at) $('bse-asof').textContent = 'BSE list and market caps as of ' + new Date(m.bse_list_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) + '.';
       if (m.bse_ok === false) $('f-bse').title = 'BSE data did not load in the last scan';

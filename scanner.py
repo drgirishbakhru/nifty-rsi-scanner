@@ -99,7 +99,7 @@ def main():
     ap.add_argument("--dashboard", metavar="DIR",
                     help="scan all NSE stocks (+ BSE-only stocks) and write rows.json + summary.json for the dashboard")
     ap.add_argument("--bse-min-cr", type=float, default=1000,
-                    help="dashboard: minimum market cap in crore for BSE-only stocks (default 1000)")
+                    help="dashboard: minimum market cap in crore for every stock, NSE and BSE (default 1000)")
     args = ap.parse_args()
     if args.dashboard:
         args.universe, args.fresh = "all", False
@@ -267,6 +267,9 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
             "fresh": bool(r["FreshCross"]), "month_chg_pct": r["MonthChg%"],
             "rsi_w": rsi_w, "weekly_above": rsi_w is not None and rsi_w > args.level,
         })
+    before = len(out)
+    out = [r for r in out if r["mcap_cr"] is None or r["mcap_cr"] >= args.bse_min_cr]
+    small_excluded = before - len(out)
     out.sort(key=lambda r: -r["rsi"])
     now = datetime.now().astimezone()
     summary = [{
@@ -275,7 +278,7 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
         "rsi_length": args.length, "level": args.level, "min_bars": args.min_bars,
         "universe": universe_n, "fetched": fetched_n, "too_short": skipped_n,
         "total_market_size": len(tm),
-        "bse_ok": bse_ok, "bse_list_at": bse_list_at, "bse_min_cr": args.bse_min_cr, "bse_universe": bse_n,
+        "bse_ok": bse_ok, "bse_list_at": bse_list_at, "bse_min_cr": args.bse_min_cr, "min_mcap_cr": args.bse_min_cr, "small_excluded": small_excluded, "bse_universe": bse_n,
         "bse_fetched": bse_fetched, "bse_too_short": bse_skipped,
     }]
     os.makedirs(args.dashboard, exist_ok=True)
