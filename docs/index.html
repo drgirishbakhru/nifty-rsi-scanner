@@ -41,6 +41,10 @@
   .chip { font: 500 .8rem var(--sans); padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
   .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--panel); }
   .chip .n { opacity: .7; margin-left: .35em; font-family: var(--mono); font-size: .75rem; }
+  .btn { font: 500 .8rem var(--sans); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
+  .btn:hover { background: var(--accent-soft); }
+  .dl-label, .dl-note { font-size: .78rem; color: var(--muted); }
+  .dl { border-top: 1px dashed var(--line); padding-top: 10px; }
   .sep { width: 1px; align-self: stretch; background: var(--line); margin-inline: 4px; }
   input[type=search] { font: inherit; font-size: .85rem; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); flex: 1 1 12rem; max-width: 20rem; min-width: 0; }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -77,23 +81,31 @@
   <header>
     <h1>Monthly RSI above 70</h1>
     <p class="take" id="take">Loading the latest scan…</p>
-    <p class="meta">RSI(14), Wilder's method, on monthly closes of every NSE stock in the EQ/BE series. The current month's candle is still open, so the list can change until the last trading day. Last scan: <span id="scanned">—</span>.</p>
+    <p class="meta">RSI(14), Wilder's method, on monthly closes of every NSE stock in the EQ/BE series, plus BSE-only stocks above ₹<span id="bse-min">1,000</span> cr market cap when BSE is switched on. The current month's candle is still open, so the list can change until the last trading day. Last scan: <span id="scanned">—</span>.</p>
   </header>
 
   <section class="tiles">
     <div class="tile"><span id="hits-label">Above 70</span><b id="hits">—</b><small>Monthly RSI(14) &gt; 70 now</small></div>
     <div class="tile"><span>Fresh crosses</span><b id="fresh">—</b><small>Last month closed at or below 70</small></div>
     <div class="tile"><span>Weekly also above 70</span><b id="weekly">—</b><small>Weekly RSI(14) &gt; 70 this week</small></div>
-    <div class="tile"><span>NSE stocks scanned</span><b id="universe">—</b><small><span id="short">—</span> skipped with under 24 monthly bars</small></div>
+    <div class="tile"><span>Stocks scanned</span><b id="universe">—</b><small><span id="bse-n"></span><span id="short">—</span> skipped with under 24 monthly bars</small></div>
   </section>
 
   <section class="card">
     <div class="controls">
       <div class="controls" id="groups" role="group" aria-label="Index"></div>
       <span class="sep hide-sm"></span>
+      <button type="button" class="chip" id="f-bse" aria-pressed="false">Include BSE</button>
       <button type="button" class="chip" id="f-fresh" aria-pressed="false">Fresh crosses only</button>
       <button type="button" class="chip" id="f-weekly" aria-pressed="false">Weekly RSI &gt; 70</button>
       <input type="search" id="q" placeholder="Search symbol, company, industry" aria-label="Search stocks">
+    </div>
+    <div class="controls dl">
+      <span class="dl-label" id="dl-label">Export the list below</span>
+      <button type="button" class="btn" id="dl-csv">Excel (.csv)</button>
+      <button type="button" class="btn" id="dl-tv">TradingView watchlist (.txt)</button>
+      <button type="button" class="btn" id="copy-tv">Copy TradingView symbols</button>
+      <span class="dl-note" id="dl-note" role="status"></span>
     </div>
     <div class="box">
       <table>
@@ -101,6 +113,7 @@
           <th><button type="button" data-k="symbol">Symbol</button></th>
           <th class="hide-sm"><button type="button" data-k="company">Company</button></th>
           <th class="hide-sm"><button type="button" data-k="index">Index</button></th>
+          <th class="num hide-sm"><button type="button" data-k="mcap_cr">Mcap ₹ cr</button></th>
           <th class="num"><button type="button" data-k="close">Close ₹</button></th>
           <th class="num"><button type="button" data-k="month_chg_pct">Month %</button></th>
           <th class="num hide-sm"><button type="button" data-k="rsi_prev">Prev RSI</button></th>
@@ -113,17 +126,18 @@
     </div>
   </section>
 
-  <footer>Prices from Yahoo Finance, index lists from NSE. Updated automatically every weekday at 4:30 PM IST. Not investment advice. Symbols open on TradingView.</footer>
+  <footer>Prices and market caps from Yahoo Finance, index lists from NSE. BSE-only means listed on BSE but not on NSE; REITs and InvITs are left out. Updated automatically every weekday at 4:30 PM IST. Not investment advice. Symbols open on TradingView.</footer>
 </main>
 
 <script>
 (() => {
   const GROUPS = {
-    'All NSE': () => true,
+    'All': () => true,
     'Nifty Total Market': (r) => r.index !== 'Outside Total Market',
     'Nifty 500': (r) => r.index === 'Nifty 500',
     'Microcap 250': (r) => r.index === 'Microcap 250',
     'Outside Total Market': (r) => r.index === 'Outside Total Market',
+    'BSE only': (r) => r.exchange === 'BSE',
   };
   const $ = (id) => document.getElementById(id);
   const n0 = new Intl.NumberFormat('en-IN');
@@ -133,10 +147,12 @@
 
   const load = (k, d) => { try { return JSON.parse(localStorage.getItem('rsi.' + k)) ?? d; } catch { return d; } };
   const save = (k, v) => { try { localStorage.setItem('rsi.' + k, JSON.stringify(v)); } catch {} };
-  const st = { group: load('group', 'All NSE'), fresh: load('fresh', false), weekly: load('weekly', false), q: '', sort: 'rsi', dir: -1 };
-  if (!GROUPS[st.group]) st.group = 'All NSE';
+  const st = { group: load('group', 'All'), bse: load('bse', false), fresh: load('fresh', false), weekly: load('weekly', false), q: '', sort: 'rsi', dir: -1 };
+  if (!GROUPS[st.group]) st.group = 'All';
+  let shown = [];
   let rows = [];
 
+  $('f-bse').onclick = () => { st.bse = !st.bse; save('bse', st.bse); if (!st.bse && st.group === 'BSE only') { st.group = 'All'; save('group', st.group); } draw(); };
   $('f-fresh').onclick = () => { st.fresh = !st.fresh; save('fresh', st.fresh); draw(); };
   $('f-weekly').onclick = () => { st.weekly = !st.weekly; save('weekly', st.weekly); draw(); };
   $('q').oninput = (e) => { st.q = e.target.value.trim().toLowerCase(); draw(); };
@@ -150,23 +166,26 @@
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 
   function draw() {
-    const inG = rows.filter(GROUPS[st.group]);
-    $('groups').replaceChildren(...Object.keys(GROUPS).map((g) => {
+    const base = st.bse ? rows : rows.filter((r) => r.exchange !== 'BSE');
+    const inG = base.filter(GROUPS[st.group]);
+    const label = st.group === 'All' ? (st.bse ? 'NSE + BSE' : 'all NSE') : st.group;
+    $('groups').replaceChildren(...Object.keys(GROUPS).filter((g) => st.bse || g !== 'BSE only').map((g) => {
       const b = el('button', 'chip', g); b.type = 'button'; b.dataset.group = g;
       b.setAttribute('aria-pressed', String(g === st.group));
-      b.append(el('span', 'n', n0.format(rows.filter(GROUPS[g]).length)));
+      b.append(el('span', 'n', n0.format(base.filter(GROUPS[g]).length)));
       return b;
     }));
+    $('f-bse').setAttribute('aria-pressed', String(st.bse));
     $('f-fresh').setAttribute('aria-pressed', String(st.fresh));
     $('f-weekly').setAttribute('aria-pressed', String(st.weekly));
 
     const fresh = inG.filter((r) => r.fresh).length, weekly = inG.filter((r) => r.weekly_above).length;
-    $('hits-label').textContent = 'Above 70 · ' + st.group;
+    $('hits-label').textContent = 'Above 70 · ' + label;
     $('hits').textContent = n0.format(inG.length);
     $('fresh').textContent = n0.format(fresh);
     $('weekly').textContent = n0.format(weekly);
     const t = $('take'); t.replaceChildren(
-      el('b', null, n0.format(inG.length)), ` stocks in ${st.group} have a monthly RSI above 70. `,
+      el('b', null, n0.format(inG.length)), ` stocks in ${label} have a monthly RSI above 70. `,
       el('b', null, n0.format(fresh)), ' are fresh crosses, and ', el('b', null, n0.format(weekly)), ' are also above 70 on the weekly.');
 
     let list = inG;
@@ -183,22 +202,52 @@
       else th.removeAttribute('aria-sort');
     });
 
+    shown = list;
+    $('dl-label').textContent = `Export the ${n0.format(list.length)} stocks below`;
+    ['dl-csv', 'dl-tv', 'copy-tv'].forEach((id) => { $(id).disabled = !list.length; });
     const tb = $('tbody');
-    if (!list.length) { const tr = el('tr'); const td = el('td', 'empty', 'No stocks match these filters.'); td.colSpan = 9; tr.append(td); tb.replaceChildren(tr); return; }
+    if (!list.length) { const tr = el('tr'); const td = el('td', 'empty', 'No stocks match these filters.'); td.colSpan = 10; tr.append(td); tb.replaceChildren(tr); return; }
     tb.replaceChildren(...list.map((r) => {
       const tr = el('tr');
-      const a = el('a', null, r.symbol); a.href = 'https://www.tradingview.com/chart/?symbol=NSE%3A' + encodeURIComponent(r.symbol); a.target = '_blank'; a.rel = 'noopener';
+      const a = el('a', null, r.symbol); a.href = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent(r.tv || 'NSE:' + r.symbol); a.target = '_blank'; a.rel = 'noopener';
       const sym = el('td', 'sym'); sym.append(a);
       const co = el('td', 'co hide-sm', r.company); co.title = r.industry ? `${r.company} · ${r.industry}` : r.company;
       const rc = el('td', 'num'); const w = el('span', 'rsi'); const bar = el('span', 'bar'); const fill = el('i', r.rsi >= 85 ? 'hot' : '');
       fill.style.width = Math.max(4, Math.min(100, (r.rsi - 70) / 30 * 100)) + '%'; bar.append(fill); w.append(bar, el('span', null, f2(r.rsi))); rc.append(w);
       const fc = el('td'); if (r.fresh) fc.append(el('span', 'pill', 'Fresh'));
-      tr.append(sym, co, el('td', 'idx hide-sm', r.index), el('td', 'num', n2.format(r.close)),
+      tr.append(sym, co, el('td', 'idx hide-sm', r.index), el('td', 'num hide-sm', r.mcap_cr == null ? '—' : n0.format(r.mcap_cr)), el('td', 'num', n2.format(r.close)),
         el('td', 'num ' + (r.month_chg_pct >= 0 ? 'up' : 'down'), pct(r.month_chg_pct)),
         el('td', 'num hide-sm', f2(r.rsi_prev)), rc, el('td', 'num' + (r.weekly_above ? ' up' : ''), f2(r.rsi_w)), fc);
       return tr;
     }));
   }
+
+  const stamp = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const tvList = () => shown.map((r) => r.tv || 'NSE:' + r.symbol);
+  const note = (t) => { $('dl-note').textContent = t; clearTimeout(note.t); note.t = setTimeout(() => { $('dl-note').textContent = ''; }, 4000); };
+  function saveFile(name, text, type) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  const cell = (v) => { const t = v == null ? '' : String(v); return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
+  $('dl-csv').onclick = () => {
+    const cols = [['TradingView', (r) => r.tv || 'NSE:' + r.symbol], ['Symbol', 'symbol'], ['Exchange', (r) => r.exchange || 'NSE'], ['Company', 'company'],
+      ['Industry', 'industry'], ['Index', 'index'], ['Mcap (Rs cr)', 'mcap_cr'], ['Close', 'close'], ['Month %', 'month_chg_pct'],
+      ['Prev month RSI', 'rsi_prev'], ['Monthly RSI', 'rsi'], ['Weekly RSI', 'rsi_w'], ['Fresh cross', (r) => r.fresh ? 'Yes' : ''],
+      ['Weekly > 70', (r) => r.weekly_above ? 'Yes' : '']];
+    const lines = [cols.map((c) => c[0]).join(',')].concat(shown.map((r) => cols.map(([, f]) => cell(typeof f === 'function' ? f(r) : r[f])).join(',')));
+    saveFile(`monthly-rsi-${stamp()}.csv`, '\ufeff' + lines.join('\r\n'), 'text/csv;charset=utf-8');
+    note('Downloaded. Opens in Excel.');
+  };
+  $('dl-tv').onclick = () => {
+    saveFile(`monthly-rsi-${stamp()}.txt`, tvList().join(','), 'text/plain;charset=utf-8');
+    note('Downloaded. In TradingView: watchlist menu → Import list.');
+  };
+  $('copy-tv').onclick = () => {
+    const t = tvList().join(',');
+    navigator.clipboard.writeText(t).then(() => note('Copied. Paste into a TradingView watchlist\'s Add symbol box.'), () => note('Copy failed. Use the .txt download instead.'));
+  };
 
   Promise.all(['data/rows.json', 'data/summary.json'].map((u) => fetch(u + '?t=' + Date.now()).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })))
     .then(([r, s]) => {
@@ -207,7 +256,10 @@
       $('scanned').textContent = at.toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }) + ' IST';
       if (Date.now() - at > 4 * 864e5) { $('scanned').classList.add('stale'); $('scanned').textContent += ' (out of date)'; }
       $('universe').textContent = n0.format(m.universe);
-      $('short').textContent = n0.format(m.too_short);
+      $('short').textContent = n0.format(m.too_short + (m.bse_too_short || 0));
+      if (m.bse_universe != null) { $('universe').textContent = n0.format(m.universe + m.bse_universe); $('bse-n').textContent = `${n0.format(m.universe)} NSE + ${n0.format(m.bse_universe)} BSE-only · `; }
+      if (m.bse_min_cr) $('bse-min').textContent = n0.format(m.bse_min_cr);
+      if (m.bse_ok === false) $('f-bse').title = 'BSE data did not load in the last scan';
       draw();
     })
     .catch(() => { $('take').textContent = "Couldn't load the scan results. Refresh the page to try again."; });

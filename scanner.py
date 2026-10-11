@@ -18,6 +18,7 @@ Usage:
 """
 import argparse
 import io
+import re
 import sys
 from datetime import datetime
 
@@ -67,12 +68,12 @@ def rsi_wilder(close, length=14):
     return rsi.where(avg_loss != 0, 100.0)
 
 
-def fetch_monthly(symbols, chunk=100, interval="1mo", period="max"):
+def fetch_monthly(symbols, chunk=100, interval="1mo", period="max", suffix=".NS"):
     """Download bars in chunks (monthly, full history by default); returns {symbol: close Series}."""
     out = {}
     for i in range(0, len(symbols), chunk):
         batch = symbols[i:i + chunk]
-        tickers = [f"{s}.NS" for s in batch]
+        tickers = [f"{s}{suffix}" for s in batch]
         print(f"  downloading {i + 1}-{i + len(batch)} of {len(symbols)}...", file=sys.stderr)
         data = yf.download(tickers, period=period, interval=interval, group_by="ticker",
                            auto_adjust=False, progress=False, threads=True)
@@ -96,7 +97,9 @@ def main():
     ap.add_argument("--fresh", action="store_true", help="only stocks whose previous month RSI was <= level")
     ap.add_argument("--min-bars", type=int, default=24, help="skip stocks with fewer monthly bars")
     ap.add_argument("--dashboard", metavar="DIR",
-                    help="scan all NSE stocks and write rows.json + summary.json for the dashboard")
+                    help="scan all NSE stocks (+ BSE-only stocks) and write rows.json + summary.json for the dashboard")
+    ap.add_argument("--bse-min-cr", type=float, default=1000,
+                    help="dashboard: minimum market cap in crore for BSE-only stocks (default 1000)")
     args = ap.parse_args()
     if args.dashboard:
         args.universe, args.fresh = "all", False
@@ -106,27 +109,7 @@ def main():
     print(f"Universe '{args.universe}': {len(symbols)} symbols", file=sys.stderr)
 
     closes = fetch_monthly(symbols)
-    rows, skipped = [], 0
-    for s, close in closes.items():
-        if len(close) < max(args.min_bars, args.length + 2):
-            skipped += 1
-            continue
-        rsi = rsi_wilder(close, args.length)
-        cur, prev = rsi.iloc[-1], rsi.iloc[-2]
-        if pd.isna(cur) or cur <= args.level:
-            continue
-        fresh = pd.notna(prev) and prev <= args.level
-        if args.fresh and not fresh:
-            continue
-        rows.append({
-            "Symbol": s,
-            "Company": names.get(s, ""),
-            "Close": round(float(close.iloc[-1]), 2),
-            "RSI_M": round(float(cur), 2),
-            "RSI_M_prev": round(float(prev), 2),
-            "FreshCross": "YES" if fresh else "",
-            "MonthChg%": round(float(close.iloc[-1] / close.iloc[-2] - 1) * 100, 2),
-        })
+    rows, skipped = scan(closes, names, args)
 
     missing = len(symbols) - len(closes)
     print(f"Fetched {len(closes)} | no data {missing} | too short {skipped}", file=sys.stderr)
@@ -149,6 +132,66 @@ def main():
     print(f"Saved -> {fname}")
 
 
+def scan(closes, names, args):
+    """Monthly RSI hits from {symbol: close Series}; returns (rows, number skipped as too short)."""
+    rows, skipped = [], 0
+    for s, close in closes.items():
+        if len(close) < max(args.min_bars, args.length + 2):
+            skipped += 1
+            continue
+        rsi = rsi_wilder(close, args.length)
+        cur, prev = rsi.iloc[-1], rsi.iloc[-2]
+        if pd.isna(cur) or cur <= args.level:
+            continue
+        fresh = pd.notna(prev) and prev <= args.level
+        if args.fresh and not fresh:
+            continue
+        rows.append({
+            "Symbol": s,
+            "Company": names.get(s, ""),
+            "Close": round(float(close.iloc[-1]), 2),
+            "RSI_M": round(float(cur), 2),
+            "RSI_M_prev": round(float(prev), 2),
+            "FreshCross": "YES" if fresh else "",
+            "MonthChg%": round(float(close.iloc[-1] / close.iloc[-2] - 1) * 100, 2),
+        })
+    return rows, skipped
+
+
+def yahoo_screen(exchange, min_mcap):
+    """Every Yahoo screener quote on an exchange ('BSE', 'NSI') with market cap >= min_mcap (INR)."""
+    from yfinance import EquityQuery as Q
+    q = Q("and", [Q("eq", ["exchange", exchange]), Q("gte", ["intradaymarketcap", min_mcap])])
+    out, offset = [], 0
+    while True:
+        r = yf.screen(q, size=250, offset=offset, sortField="intradaymarketcap", sortAsc=False)
+        out += r.get("quotes", [])
+        offset += 250
+        if not r.get("quotes") or offset >= r.get("total", 0):
+            return out
+
+
+def _norm(name):
+    return re.sub(r"[^a-z0-9]", "", re.sub(r"\b(limited|ltd)\b", "", str(name).lower()))
+
+
+def bse_only_universe(min_cr):
+    """BSE stocks with market cap >= min_cr crore that are not listed on NSE: {symbol: (name, mcap_cr)}."""
+    nse = read_list("all")
+    nse_syms = set(nse["SYMBOL"])
+    nse_names = set(nse["NAME OF COMPANY"].map(_norm))
+    out = {}
+    for x in yahoo_screen("BSE", min_cr * 1e7):
+        sym = x["symbol"].removesuffix(".BO")
+        name = x.get("longName") or x.get("shortName") or sym
+        if sym in nse_syms or _norm(name) in nse_names:
+            continue
+        if re.search(r"\b(reit|invit|trust|fund|etf)\b", name, re.I):
+            continue  # REITs/InvITs/ETFs, not stocks
+        out[sym] = (name, round(x.get("marketCap", 0) / 1e7))
+    return out
+
+
 def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
     """Tag each hit with its Nifty index membership and write JSON for the dashboard."""
     import json
@@ -157,17 +200,47 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
     industry = dict(zip(tm["SYMBOL"], tm["INDUSTRY"]))
     n500 = set(read_list("nifty500")["SYMBOL"])
     micro = set(read_list("microcap250")["SYMBOL"])
+
+    # BSE-only stocks above the market-cap floor. A failure here keeps the NSE results.
+    bse_rows, bse_n, bse_fetched, bse_skipped, bse_ok = [], 0, 0, 0, True
+    try:
+        bse = bse_only_universe(args.bse_min_cr)
+        bse_n = len(bse)
+        print(f"BSE-only universe (>= {args.bse_min_cr:.0f} cr): {bse_n} symbols", file=sys.stderr)
+        bse_closes = fetch_monthly(sorted(bse), suffix=".BO")
+        bse_fetched = len(bse_closes)
+        bse_rows, bse_skipped = scan(bse_closes, {k: v[0] for k, v in bse.items()}, args)
+    except Exception as e:  # noqa: BLE001
+        print(f"BSE scan failed: {e}", file=sys.stderr)
+        bse, bse_ok = {}, False
+
+    nse_mcap = {}
+    try:
+        nse_mcap = {x["symbol"].removesuffix(".NS"): round(x.get("marketCap", 0) / 1e7)
+                    for x in yahoo_screen("NSI", 1)}
+    except Exception as e:  # noqa: BLE001
+        print(f"NSE market caps unavailable: {e}", file=sys.stderr)
+
     print("Fetching weekly bars for the hits...", file=sys.stderr)
-    weekly = fetch_monthly([r["Symbol"] for r in rows], interval="1wk", period="10y")
+    weekly = {("NSE", k): v for k, v in fetch_monthly([r["Symbol"] for r in rows], interval="1wk", period="10y").items()}
+    if bse_rows:
+        weekly.update({("BSE", k): v for k, v in fetch_monthly([r["Symbol"] for r in bse_rows], interval="1wk",
+                                                               period="10y", suffix=".BO").items()})
     out = []
-    for r in rows:
+    for exch, r in [("NSE", r) for r in rows] + [("BSE", r) for r in bse_rows]:
         s = r["Symbol"]
-        w = rsi_wilder(weekly[s], args.length) if s in weekly and len(weekly[s]) > args.length + 1 else None
+        wc = weekly.get((exch, s))
+        w = rsi_wilder(wc, args.length) if wc is not None and len(wc) > args.length + 1 else None
         rsi_w = round(float(w.iloc[-1]), 2) if w is not None and pd.notna(w.iloc[-1]) else None
-        group = "Nifty 500" if s in n500 else "Microcap 250" if s in micro else "Outside Total Market"
+        if exch == "BSE":
+            group, mcap = "BSE only", bse[s][1]
+        else:
+            group = "Nifty 500" if s in n500 else "Microcap 250" if s in micro else "Outside Total Market"
+            mcap = nse_mcap.get(s)
         out.append({
-            "symbol": s, "company": r["Company"], "industry": industry.get(s, ""),
-            "index": group, "close": r["Close"], "rsi": r["RSI_M"], "rsi_prev": r["RSI_M_prev"],
+            "symbol": s, "exchange": exch, "tv": f"{exch}:{s}", "company": r["Company"],
+            "industry": industry.get(s, "") if exch == "NSE" else "",
+            "index": group, "mcap_cr": mcap, "close": r["Close"], "rsi": r["RSI_M"], "rsi_prev": r["RSI_M_prev"],
             "fresh": bool(r["FreshCross"]), "month_chg_pct": r["MonthChg%"],
             "rsi_w": rsi_w, "weekly_above": rsi_w is not None and rsi_w > args.level,
         })
@@ -179,6 +252,8 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
         "rsi_length": args.length, "level": args.level, "min_bars": args.min_bars,
         "universe": universe_n, "fetched": fetched_n, "too_short": skipped_n,
         "total_market_size": len(tm),
+        "bse_ok": bse_ok, "bse_min_cr": args.bse_min_cr, "bse_universe": bse_n,
+        "bse_fetched": bse_fetched, "bse_too_short": bse_skipped,
     }]
     os.makedirs(args.dashboard, exist_ok=True)
     for fname, data in (("rows.json", out), ("summary.json", summary)):
