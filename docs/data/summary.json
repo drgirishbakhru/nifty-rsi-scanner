@@ -1,13 +1,13 @@
 [
  {
-  "scanned_at": "2026-10-21T21:17:50+05:30",
+  "scanned_at": "2026-10-22T21:16:27+05:30",
   "month": "2026-10",
   "rsi_length": 14,
   "level": 70,
   "min_bars": 24,
-  "universe": 2578,
-  "fetched": 2575,
-  "too_short": 547,
+  "universe": 2579,
+  "fetched": 2576,
+  "too_short": 546,
   "total_market_size": 755,
   "bse_ok": true,
   "bse_list_at": "2026-10-20T20:59:02+05:30",
