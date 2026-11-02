@@ -1,6 +1,6 @@
 # Nifty monthly RSI scanner
 
-Scans every NSE-listed stock (EQ/BE series, ~2,500) for **monthly RSI(14) above 70** on the current month's candle, and adds each hit's weekly RSI(14).
+Scans every NSE-listed stock (EQ/BE series, ~2,500) for **monthly RSI(14) above 70** on the current month's candle, and adds each hit's weekly RSI(14) and monthly + weekly ADX(14).
 
 - **Dashboard:** GitHub Pages serves `docs/`.
 - **Updates:** `.github/workflows/scan.yml` runs every weekday at 16:30 IST, and on demand from Actions → *Monthly RSI scan* → *Run workflow*.

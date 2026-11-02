@@ -68,8 +68,47 @@ def rsi_wilder(close, length=14):
     return rsi.where(avg_loss != 0, 100.0)
 
 
-def fetch_monthly(symbols, chunk=100, interval="1mo", period="max", suffix=".NS"):
-    """Download bars in chunks (monthly, full history by default); returns {symbol: close Series}."""
+def rma(x, length):
+    """TradingView's ta.rma: Wilder smoothing seeded with the SMA of the first `length` values."""
+    x = x.astype(float)
+    out = pd.Series(float("nan"), index=x.index)
+    vals = x.to_numpy()
+    start = pd.Series(vals).first_valid_index()
+    if start is None or len(vals) - start < length:
+        return out
+    prev = vals[start:start + length].mean()
+    res = [float("nan")] * (start + length - 1) + [prev]
+    for v in vals[start + length:]:
+        prev = (prev * (length - 1) + v) / length
+        res.append(prev)
+    return pd.Series(res, index=x.index)
+
+
+def adx(bars, length=14, smoothing=14):
+    """TradingView's ADX (ta.dmi, DI length 14, ADX smoothing 14) from a High/Low/Close frame."""
+    h, l, c = bars["High"], bars["Low"], bars["Close"]
+    up, down = h.diff(), -l.diff()
+    plus_dm = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+    tr.iloc[0] = h.iloc[0] - l.iloc[0]
+    atr = rma(tr, length)
+    plus = 100 * rma(plus_dm.iloc[1:], length).reindex(h.index) / atr
+    minus = 100 * rma(minus_dm.iloc[1:], length).reindex(h.index) / atr
+    total = (plus + minus).replace(0, 1)
+    return 100 * rma(((plus - minus).abs() / total).dropna(), smoothing).reindex(h.index)
+
+
+def last_adx(bars, length=14):
+    if bars is None or len(bars) < 2 * length + 1:
+        return None
+    v = adx(bars, length, length).iloc[-1]
+    return round(float(v), 2) if pd.notna(v) else None
+
+
+def fetch_monthly(symbols, chunk=100, interval="1mo", period="max", suffix=".NS", ohlc=False):
+    """Download bars in chunks (monthly, full history by default).
+    Returns {symbol: close Series}, or {symbol: High/Low/Close frame} with ohlc=True."""
     out = {}
     for i in range(0, len(symbols), chunk):
         batch = symbols[i:i + chunk]
@@ -79,7 +118,15 @@ def fetch_monthly(symbols, chunk=100, interval="1mo", period="max", suffix=".NS"
                            auto_adjust=False, progress=False, threads=True)
         for s, t in zip(batch, tickers):
             try:
-                close = data[t]["Close"].dropna() if len(tickers) > 1 else data["Close"].dropna()
+                frame = data[t] if len(tickers) > 1 else data
+                if ohlc:
+                    bars = frame[["High", "Low", "Close"]].dropna()
+                    if isinstance(bars.columns, pd.MultiIndex):
+                        bars.columns = bars.columns.get_level_values(0)
+                    if len(bars):
+                        out[s] = bars
+                    continue
+                close = frame["Close"].dropna()
             except KeyError:
                 continue
             if isinstance(close, pd.DataFrame):
@@ -98,6 +145,7 @@ def main():
     ap.add_argument("--min-bars", type=int, default=24, help="skip stocks with fewer monthly bars")
     ap.add_argument("--dashboard", metavar="DIR",
                     help="scan all NSE stocks (+ BSE-only stocks) and write rows.json + summary.json for the dashboard")
+    ap.add_argument("--adx-level", type=float, default=25, help="dashboard: ADX(14) threshold (default 25)")
     ap.add_argument("--bse-min-cr", type=float, default=1000,
                     help="dashboard: minimum market cap in crore for every stock, NSE and BSE (default 1000)")
     args = ap.parse_args()
@@ -244,15 +292,22 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
     with open(cache_path, "w") as f:
         json.dump(cache, f)
 
-    print("Fetching weekly bars for the hits...", file=sys.stderr)
-    weekly = {("NSE", k): v for k, v in fetch_monthly([r["Symbol"] for r in rows], interval="1wk", period="10y").items()}
-    if bse_rows:
-        weekly.update({("BSE", k): v for k, v in fetch_monthly([r["Symbol"] for r in bse_rows], interval="1wk",
-                                                               period="10y", suffix=".BO").items()})
+    # Weekly bars (RSI + ADX) and monthly High/Low/Close (ADX) for the hits only.
+    print("Fetching weekly and monthly bars for the hits...", file=sys.stderr)
+    weekly, monthly = {}, {}
+    for exch, hits, suffix in (("NSE", rows, ".NS"), ("BSE", bse_rows, ".BO")):
+        if not hits:
+            continue
+        syms = [r["Symbol"] for r in hits]
+        weekly.update({(exch, k): v for k, v in fetch_monthly(syms, interval="1wk", period="10y",
+                                                              suffix=suffix, ohlc=True).items()})
+        monthly.update({(exch, k): v for k, v in fetch_monthly(syms, suffix=suffix, ohlc=True).items()})
     out = []
     for exch, r in [("NSE", r) for r in rows] + [("BSE", r) for r in bse_rows]:
         s = r["Symbol"]
-        wc = weekly.get((exch, s))
+        wb = weekly.get((exch, s))
+        wc = wb["Close"] if wb is not None else None
+        adx_w, adx_m = last_adx(wb), last_adx(monthly.get((exch, s)))
         w = rsi_wilder(wc, args.length) if wc is not None and len(wc) > args.length + 1 else None
         rsi_w = round(float(w.iloc[-1]), 2) if w is not None and pd.notna(w.iloc[-1]) else None
         if exch == "BSE":
@@ -266,6 +321,8 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
             "index": group, "mcap_cr": mcap, "close": r["Close"], "rsi": r["RSI_M"], "rsi_prev": r["RSI_M_prev"],
             "fresh": bool(r["FreshCross"]), "month_chg_pct": r["MonthChg%"],
             "rsi_w": rsi_w, "weekly_above": rsi_w is not None and rsi_w > args.level,
+            "adx_m": adx_m, "adx_m_above": adx_m is not None and adx_m > args.adx_level,
+            "adx_w": adx_w, "adx_w_above": adx_w is not None and adx_w > args.adx_level,
         })
     before = len(out)
     out = [r for r in out if r["mcap_cr"] is None or r["mcap_cr"] >= args.bse_min_cr]
@@ -275,7 +332,7 @@ def write_dashboard(args, rows, universe_n, fetched_n, skipped_n):
     summary = [{
         "scanned_at": now.isoformat(timespec="seconds"),
         "month": now.strftime("%Y-%m"),
-        "rsi_length": args.length, "level": args.level, "min_bars": args.min_bars,
+        "rsi_length": args.length, "level": args.level, "adx_level": args.adx_level, "min_bars": args.min_bars,
         "universe": universe_n, "fetched": fetched_n, "too_short": skipped_n,
         "total_market_size": len(tm),
         "bse_ok": bse_ok, "bse_list_at": bse_list_at, "bse_min_cr": args.bse_min_cr, "min_mcap_cr": args.bse_min_cr, "small_excluded": small_excluded, "bse_universe": bse_n,
