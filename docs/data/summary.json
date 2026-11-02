@@ -1,22 +1,22 @@
 [
  {
-  "scanned_at": "2026-11-02T08:24:20+05:30",
+  "scanned_at": "2026-11-03T02:08:21+05:30",
   "month": "2026-11",
   "rsi_length": 14,
   "level": 70,
   "adx_level": 25,
   "min_bars": 24,
   "universe": 2593,
-  "fetched": 2590,
-  "too_short": 558,
+  "fetched": 2591,
+  "too_short": 538,
   "total_market_size": 754,
   "bse_ok": true,
-  "bse_list_at": "2026-11-02T08:24:05+05:30",
+  "bse_list_at": "2026-11-03T02:08:02+05:30",
   "bse_min_cr": 1000,
   "min_mcap_cr": 1000,
-  "small_excluded": 12,
+  "small_excluded": 10,
   "bse_universe": 52,
   "bse_fetched": 52,
-  "bse_too_short": 11
+  "bse_too_short": 9
  }
 ]
