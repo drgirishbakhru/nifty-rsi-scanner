@@ -74,6 +74,12 @@
   .up { color: var(--up); } .down { color: var(--down); }
   .why { color: var(--muted); font-size: .78rem; font-weight: 400; }
   .empty { text-align: center; color: var(--muted); padding: 24px; }
+  th[data-k] { cursor: pointer; }
+  th[data-k]:hover { color: var(--fg); }
+  th.sorted { color: var(--fg); }
+  .tick { color: var(--up); font-weight: 700; }
+  .dim { color: var(--muted); }
+  input[type=search] { font: inherit; font-size: .85rem; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); flex: 1 1 10rem; max-width: 16rem; min-width: 0; }
 
   .lock { display: grid; gap: 10px; max-width: 26rem; }
   .lock h2 { margin: 0; font: 400 1.5rem/1.2 var(--serif); }
@@ -138,7 +144,7 @@
   let S = null;            // decrypted signals
   let RSI = [];            // public RSI rows
   let RSI_SUM = null;
-  const state = { tab: 'focus', tf: 'W', rsiFilter: 'all' };
+  const state = { tab: 'focus', tf: 'W', rsiFilter: 'all', u: { seg: 'all', rsi: false, adx: false, q: '', k: 'mcap', dir: -1 } };
   let shown = [];          // [symbol, exchange] for the copy button
 
   // ---- data ----
@@ -218,6 +224,7 @@
       list.push(['focus', '🎯 Focus', S.focus.length]);
       for (const [k, v] of STRATS()) list.push([k, v.name.replace(' with ADX', ''), buys(k, 'W') + buys(k, 'D')]);
       if (S.intraday) list.push(['intraday', 'Intraday Swing', S.intraday.rows.length]);
+      if (S.universe) list.push(['n500', 'Nifty 500', S.universe.length]);
     }
     list.push(['rsi', 'RSI > 70', RSI.filter((r) => r.exchange === 'NSE').length]);
     if (!list.some(([k]) => k === state.tab)) state.tab = list[0][0];
@@ -262,6 +269,43 @@
       d.rows.map((r) => `<tr>${symCell(r.s)}<td>${pill(r.status)}</td><td>${esc(r.kind)} <span class="why">${esc(r.side)}</span></td><td class="num">${fmt(r.entry)}</td><td>${esc(r.since)}</td><td class="num">${fmt(r.stop)}</td><td class="num">${r.target == null ? '<span class="why">trail</span>' : fmt(r.target)}</td><td class="num">${fmt(r.close)}</td><td class="num">${pct(r.pnl)}</td></tr>`));
   }
 
+  function viewUniverse() {
+    const u = state.u;
+    const chip = (key, val, label) => `<button class="chip small" data-key="${key}" data-val="${val}" aria-pressed="${String(u[key]) === String(val)}">${label}</button>`;
+    $('sub').innerHTML = [chip('seg', 'all', 'All'), chip('seg', 'Large', 'Large'), chip('seg', 'Mid', 'Mid'), chip('seg', 'Small', 'Small'),
+      `<button class="chip small" data-tog="rsi" aria-pressed="${u.rsi}">RSI &gt; 60 on D, W, M</button>`,
+      `<button class="chip small" data-tog="adx" aria-pressed="${u.adx}">ADX &gt; 20 on D and W</button>`,
+      `<input type="search" id="uq" placeholder="Search symbol or industry" value="${esc(u.q)}" aria-label="Search">`].join('');
+    $('sub').querySelectorAll('[data-key]').forEach((b) => b.onclick = () => { u[b.dataset.key] = b.dataset.val; render(); });
+    $('sub').querySelectorAll('[data-tog]').forEach((b) => b.onclick = () => { u[b.dataset.tog] = !u[b.dataset.tog]; render(); });
+    $('uq').oninput = (e) => { u.q = e.target.value; drawUniverse(); };
+    $('rule').innerHTML = 'All Nifty 500 stocks, largest first. <b>vs EMA20</b> = how far the price is above (+) or below (−) the monthly / quarterly EMA20. <b>EPS growth</b> = analysts\' expected growth over this financial year and next, combined (blank when no estimates). <b>Vol</b> = average volume of the last 5 days as % of the 30-day average. Market cap, PE, EV/EBITDA and growth from Yahoo, refreshed weekly. Click a column to sort.';
+    drawUniverse();
+  }
+
+  function drawUniverse() {
+    const u = state.u, q = u.q.trim().toLowerCase();
+    let rows = S.universe.filter((r) => (u.seg === 'all' || r.seg === u.seg) && (!u.rsi || r.rsi60)
+      && (!u.adx || (r.ad > 20 && r.aw > 20)) && (!q || r.s.toLowerCase().includes(q) || (r.ind || '').toLowerCase().includes(q)));
+    const k = u.k, dir = u.dir;
+    rows = rows.slice().sort((a, b) => {
+      const x = k === 'rsi60' ? +a.rsi60 : a[k], y = k === 'rsi60' ? +b.rsi60 : b[k];
+      if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+      return typeof x === 'string' ? dir * x.localeCompare(y) : dir * (x - y);
+    });
+    shown = rows.map((r) => [r.s]);
+    const cols = [['Symbol', 's'], ['Mcap ₹ cr', 'mcap', 1], ['Price', 'price', 1], ['PE', 'pe', 1], ['EV/EBITDA', 'ev', 1],
+      ['EPS growth 2 yrs', 'g2', 1], ['vs M EMA20', 'dm', 1], ['vs Q EMA20', 'dq', 1], ['RSI D · W · M', 'rsi60'], ['ADX D · W', 'ad'], ['Vol 5d / 30d', 'vol', 1]];
+    $('thead').innerHTML = '<tr>' + cols.map(([l, key, n]) => `<th class="${n ? 'num' : ''}${key === k ? ' sorted' : ''}" data-k="${key}">${l}${key === k ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
+    $('thead').querySelectorAll('th[data-k]').forEach((th) => th.onclick = () => {
+      const key = th.dataset.k; if (u.k === key) u.dir = -u.dir; else { u.k = key; u.dir = key === 's' ? 1 : -1; } drawUniverse();
+    });
+    const t = (v, lvl) => v == null ? '<span class="dim">–</span>' : `<span class="${v > lvl ? 'tick' : 'dim'}">${fmt(v, 0)}</span>`;
+    const signed = (v) => v == null ? '' : `<span class="${v >= 0 ? 'up' : 'down'}">${v >= 0 ? '+' : ''}${fmt(v, 1)}%</span>`;
+    $('tbody').innerHTML = rows.length ? rows.map((r) => `<tr>${symCell(r.s)}<td class="num">${fmt(r.mcap, 0)}</td><td class="num">${fmt(r.price)}</td><td class="num">${fmt(r.pe, 1)}</td><td class="num">${fmt(r.ev, 1)}</td><td class="num">${signed(r.g2)}</td><td class="num">${signed(r.dm)}</td><td class="num">${signed(r.dq)}</td><td class="num">${r.rsi60 ? '✓ ' : ''}${t(r.rd, 60)} · ${t(r.rw, 60)} · ${t(r.rm, 60)}</td><td class="num">${t(r.ad, 20)} · ${t(r.aw, 20)}</td><td class="num"><span class="${r.vol >= 150 ? 'hi' : ''}">${r.vol == null ? '' : fmt(r.vol, 0) + '%'}</span></td></tr>`).join('')
+      : `<tr><td class="empty" colspan="${cols.length}">No stocks match.</td></tr>`;
+  }
+
   function viewRsi() {
     subChips([['all', 'All NSE'], ['n500', 'Nifty 500'], ['fresh', 'Fresh monthly cross'], ['weekly', 'Weekly also > 70']], 'rsiFilter');
     $('rule').innerHTML = 'Monthly RSI(14) above 70 on the current month\'s candle (all NSE stocks, market cap ≥ ₹1,000 cr). <b>Fresh</b> = last month closed at or below 70.';
@@ -279,6 +323,7 @@
     if (state.tab === 'focus') viewFocus();
     else if (state.tab === 'intraday') viewIntraday();
     else if (state.tab === 'rsi') viewRsi();
+    else if (state.tab === 'n500') viewUniverse();
     else viewStrategy(state.tab);
     $('copy-note').textContent = '';
   }
