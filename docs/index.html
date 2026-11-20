@@ -78,6 +78,17 @@
   th[data-k]:hover { color: var(--fg); }
   th.sorted { color: var(--fg); }
   .tick { color: var(--up); font-weight: 700; }
+  .sep { width: 1px; align-self: stretch; background: var(--line); margin-inline: 2px; }
+  .nowrap { white-space: nowrap; }
+  .bdg { display: inline-block; min-width: 2.1em; text-align: center; margin-right: 3px; padding: 1px 5px; border-radius: 5px; font: 500 .76rem var(--mono); color: var(--muted); background: var(--bg); border: 1px solid var(--line); }
+  .bdg.on { color: var(--up); background: color-mix(in srgb, var(--up) 14%, transparent); border-color: color-mix(in srgb, var(--up) 35%, transparent); font-weight: 600; }
+  .vol { display: inline-flex; gap: 6px; align-items: center; font: .8rem var(--mono); white-space: nowrap; }
+  .vbar { width: 3.2rem; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .vbar i { display: block; height: 100%; background: var(--muted); }
+  .vbar i.hot { background: var(--hot); }
+  td.stick { position: sticky; left: 0; background: var(--panel); z-index: 0; white-space: nowrap; }
+  tr.focus td.stick { background: var(--focus); }
+  .sym .why { font-weight: 400; }
   .dim { color: var(--muted); }
   input[type=search] { font: inherit; font-size: .85rem; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); flex: 1 1 10rem; max-width: 16rem; min-width: 0; }
 
@@ -211,11 +222,12 @@
       add('focus', '🎯 Focus', S.focus.length, 'BUY + strong RSI', S.focus.length > 0);
       for (const [k, v] of STRATS()) add(k, v.name, buys(k, 'W') + buys(k, 'D'), `${buys(k, 'W')} weekly · ${buys(k, 'D')} daily BUY`);
       if (S.intraday) add('intraday', 'Intraday Swing', S.intraday.rows.length, 'setups and open trades, 1-hour');
+      if (S.universe) add('n500', '★ Strong stocks', strongCount(), 'Nifty 500: RSI, ADX and volume all strong');
     }
     const hits = RSI.filter((r) => r.exchange === 'NSE');
     add('rsi', 'Monthly RSI > 70', hits.length, `${hits.filter((r) => r.fresh).length} fresh crosses`);
     $('tiles').innerHTML = t.join('');
-    $('tiles').querySelectorAll('.tile').forEach((b) => b.onclick = () => { state.tab = b.dataset.tab; render(); });
+    $('tiles').querySelectorAll('.tile').forEach((b) => b.onclick = () => { state.tab = b.dataset.tab; if (state.tab === 'n500') state.u.strong = true; render(); });
   }
 
   function tabs() {
@@ -269,41 +281,62 @@
       d.rows.map((r) => `<tr>${symCell(r.s)}<td>${pill(r.status)}</td><td>${esc(r.kind)} <span class="why">${esc(r.side)}</span></td><td class="num">${fmt(r.entry)}</td><td>${esc(r.since)}</td><td class="num">${fmt(r.stop)}</td><td class="num">${r.target == null ? '<span class="why">trail</span>' : fmt(r.target)}</td><td class="num">${fmt(r.close)}</td><td class="num">${pct(r.pnl)}</td></tr>`));
   }
 
+  // Strong = RSI > 60 on at least 2 of D/W/M, ADX > 20 on daily or weekly, and 5-day volume >= 150% of the 30-day average
+  const VOL_HOT = 150;
+  const nRsi = (r) => [r.rd, r.rw, r.rm].filter((v) => v != null && v > 60).length;
+  const isStrong = (r) => nRsi(r) >= 2 && ((r.ad ?? 0) > 20 || (r.aw ?? 0) > 20) && (r.vol ?? 0) >= VOL_HOT;
+  const strongCount = () => (S && S.universe ? S.universe.filter(isStrong).length : 0);
+
   function viewUniverse() {
     const u = state.u;
     const chip = (key, val, label) => `<button class="chip small" data-key="${key}" data-val="${val}" aria-pressed="${String(u[key]) === String(val)}">${label}</button>`;
-    $('sub').innerHTML = [chip('seg', 'all', 'All'), chip('seg', 'Large', 'Large'), chip('seg', 'Mid', 'Mid'), chip('seg', 'Small', 'Small'),
-      `<button class="chip small" data-tog="rsi" aria-pressed="${u.rsi}">RSI &gt; 60 on D, W, M</button>`,
+    $('sub').innerHTML = [
+      `<button class="chip small" data-tog="strong" aria-pressed="${!!u.strong}">★ Strong only <span class="n">${strongCount()}</span></button>`,
+      '<span class="sep"></span>',
+      chip('seg', 'all', 'All'), chip('seg', 'Large', 'Large'), chip('seg', 'Mid', 'Mid'), chip('seg', 'Small', 'Small'),
+      '<span class="sep"></span>',
+      `<button class="chip small" data-tog="rsi" aria-pressed="${u.rsi}">RSI &gt; 60 on all 3</button>`,
       `<button class="chip small" data-tog="adx" aria-pressed="${u.adx}">ADX &gt; 20 on D and W</button>`,
       `<input type="search" id="uq" placeholder="Search symbol or industry" value="${esc(u.q)}" aria-label="Search">`].join('');
     $('sub').querySelectorAll('[data-key]').forEach((b) => b.onclick = () => { u[b.dataset.key] = b.dataset.val; render(); });
     $('sub').querySelectorAll('[data-tog]').forEach((b) => b.onclick = () => { u[b.dataset.tog] = !u[b.dataset.tog]; render(); });
     $('uq').oninput = (e) => { u.q = e.target.value; drawUniverse(); };
-    $('rule').innerHTML = 'All Nifty 500 stocks, largest first. <b>vs EMA20</b> = how far the price is above (+) or below (−) the monthly / quarterly EMA20. <b>EPS growth</b> = analysts\' expected growth over this financial year and next, combined (blank when no estimates). <b>Vol</b> = average volume of the last 5 days as % of the 30-day average. Market cap, PE, EV/EBITDA and growth from Yahoo, refreshed weekly. Click a column to sort.';
+    $('rule').innerHTML = `<b>★ Strong</b> (highlighted) = RSI above 60 on at least 2 of daily, weekly and monthly, ADX above 20 on daily or weekly, and last 5 days' volume at least ${VOL_HOT}% of the 30-day average. `
+      + '<b>vs EMA20</b> = price above (+) or below (−) the monthly / quarterly EMA20. <b>EPS growth</b> = analysts\' expected growth over this financial year and next. '
+      + 'Green badges are above the level (RSI 60, ADX 20). Fundamentals from Yahoo, refreshed weekly. Click a column to sort.';
     drawUniverse();
   }
 
   function drawUniverse() {
     const u = state.u, q = u.q.trim().toLowerCase();
-    let rows = S.universe.filter((r) => (u.seg === 'all' || r.seg === u.seg) && (!u.rsi || r.rsi60)
+    let rows = S.universe.filter((r) => (u.seg === 'all' || r.seg === u.seg) && (!u.rsi || r.rsi60) && (!u.strong || isStrong(r))
       && (!u.adx || (r.ad > 20 && r.aw > 20)) && (!q || r.s.toLowerCase().includes(q) || (r.ind || '').toLowerCase().includes(q)));
     const k = u.k, dir = u.dir;
+    const val = (r) => k === 'rsi' ? nRsi(r) * 1000 + (r.rw ?? 0) : k === 'adx' ? Math.max(r.ad ?? 0, r.aw ?? 0) : r[k];
     rows = rows.slice().sort((a, b) => {
-      const x = k === 'rsi60' ? +a.rsi60 : a[k], y = k === 'rsi60' ? +b.rsi60 : b[k];
+      const x = val(a), y = val(b);
       if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
       return typeof x === 'string' ? dir * x.localeCompare(y) : dir * (x - y);
     });
     shown = rows.map((r) => [r.s]);
-    const cols = [['Symbol', 's'], ['Mcap ₹ cr', 'mcap', 1], ['Price', 'price', 1], ['PE', 'pe', 1], ['EV/EBITDA', 'ev', 1],
-      ['EPS growth 2 yrs', 'g2', 1], ['vs M EMA20', 'dm', 1], ['vs Q EMA20', 'dq', 1], ['RSI D · W · M', 'rsi60'], ['ADX D · W', 'ad'], ['Vol 5d / 30d', 'vol', 1]];
+    const cols = [['Symbol', 's'], ['Mcap ₹ cr', 'mcap', 1], ['Price', 'price', 1], ['PE', 'pe', 1], ['EV / EBITDA', 'ev', 1],
+      ['EPS growth 2y', 'g2', 1], ['vs M EMA20', 'dm', 1], ['vs Q EMA20', 'dq', 1], ['RSI  D · W · M', 'rsi'], ['ADX  D · W', 'adx'], ['Vol 5d / 30d', 'vol']];
     $('thead').innerHTML = '<tr>' + cols.map(([l, key, n]) => `<th class="${n ? 'num' : ''}${key === k ? ' sorted' : ''}" data-k="${key}">${l}${key === k ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
     $('thead').querySelectorAll('th[data-k]').forEach((th) => th.onclick = () => {
       const key = th.dataset.k; if (u.k === key) u.dir = -u.dir; else { u.k = key; u.dir = key === 's' ? 1 : -1; } drawUniverse();
     });
-    const t = (v, lvl) => v == null ? '<span class="dim">–</span>' : `<span class="${v > lvl ? 'tick' : 'dim'}">${fmt(v, 0)}</span>`;
-    const signed = (v) => v == null ? '' : `<span class="${v >= 0 ? 'up' : 'down'}">${v >= 0 ? '+' : ''}${fmt(v, 1)}%</span>`;
-    $('tbody').innerHTML = rows.length ? rows.map((r) => `<tr>${symCell(r.s)}<td class="num">${fmt(r.mcap, 0)}</td><td class="num">${fmt(r.price)}</td><td class="num">${fmt(r.pe, 1)}</td><td class="num">${fmt(r.ev, 1)}</td><td class="num">${signed(r.g2)}</td><td class="num">${signed(r.dm)}</td><td class="num">${signed(r.dq)}</td><td class="num">${r.rsi60 ? '✓ ' : ''}${t(r.rd, 60)} · ${t(r.rw, 60)} · ${t(r.rm, 60)}</td><td class="num">${t(r.ad, 20)} · ${t(r.aw, 20)}</td><td class="num"><span class="${r.vol >= 150 ? 'hi' : ''}">${r.vol == null ? '' : fmt(r.vol, 0) + '%'}</span></td></tr>`).join('')
-      : `<tr><td class="empty" colspan="${cols.length}">No stocks match.</td></tr>`;
+    const badge = (v, lvl) => v == null ? '<span class="bdg">–</span>' : `<span class="bdg${v > lvl ? ' on' : ''}">${fmt(v, 0)}</span>`;
+    const signed = (v) => v == null ? '<span class="dim">–</span>' : `<span class="${v >= 0 ? 'up' : 'down'}">${v >= 0 ? '+' : ''}${fmt(v, 1)}%</span>`;
+    const plain = (v, d = 1) => v == null ? '<span class="dim">–</span>' : fmt(v, d);
+    const vol = (v) => v == null ? '<span class="dim">–</span>'
+      : `<span class="vol"><span class="vbar"><i class="${v >= VOL_HOT ? 'hot' : ''}" style="width:${Math.min(v, 300) / 3}%"></i></span><span class="${v >= VOL_HOT ? 'hi' : ''}">${fmt(v, 0)}%</span></span>`;
+    $('tbody').innerHTML = rows.length ? rows.map((r) => {
+      const st = isStrong(r);
+      return `<tr class="${st ? 'focus' : ''}"><td class="sym stick">${st ? '★ ' : ''}<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(r.s))}" target="_blank" rel="noopener">${esc(r.s)}</a><div class="why">${esc(r.seg)}</div></td>`
+        + `<td class="num">${plain(r.mcap, 0)}</td><td class="num">${plain(r.price, 2)}</td><td class="num">${plain(r.pe)}</td><td class="num">${plain(r.ev)}</td>`
+        + `<td class="num">${signed(r.g2)}</td><td class="num">${signed(r.dm)}</td><td class="num">${signed(r.dq)}</td>`
+        + `<td class="nowrap">${badge(r.rd, 60)}${badge(r.rw, 60)}${badge(r.rm, 60)}</td><td class="nowrap">${badge(r.ad, 20)}${badge(r.aw, 20)}</td><td>${vol(r.vol)}</td></tr>`;
+    }).join('') : `<tr><td class="empty" colspan="${cols.length}">No stocks match.</td></tr>`;
   }
 
   function viewRsi() {
