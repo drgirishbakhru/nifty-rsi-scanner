@@ -54,6 +54,9 @@
   .rule { font-size: .84rem; color: var(--muted); margin: 0; max-width: 90ch; }
   .rule b { color: var(--fg); font-weight: 600; }
   .note { font-size: .78rem; color: var(--muted); }
+  .count { margin: 0; font-size: .9rem; color: var(--muted); }
+  .count b { color: var(--fg); font: 500 1rem var(--mono); font-variant-numeric: tabular-nums; }
+  .count .f { display: inline-block; margin-left: 6px; padding: 0 8px; border-radius: 999px; font-size: .75rem; background: var(--accent-soft); color: var(--accent); }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .box { max-height: 70vh; overflow: auto; border-top: 1px solid var(--line); }
@@ -127,6 +130,7 @@
     <div class="controls tabs" id="tabs" role="tablist" aria-label="Section"></div>
     <div class="controls" id="sub"></div>
     <p class="rule" id="rule"></p>
+    <p class="count" id="count" role="status" aria-live="polite"></p>
     <div class="box"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div>
     <div class="controls">
       <button type="button" class="btn" id="copy">Copy TradingView symbols</button>
@@ -249,6 +253,12 @@
     $('sub').querySelectorAll('.chip').forEach((b) => b.onclick = () => { state[key] = b.dataset.v; render(); });
   }
 
+  // "Showing N of M <noun>" plus a tag for each active filter
+  function setCount(n, total, noun, filters = []) {
+    $('count').innerHTML = `Showing <b>${n}</b>${total != null && total !== n ? ` of <b>${total}</b>` : ''} ${esc(noun)}`
+      + filters.map((f) => `<span class="f">${esc(f)}</span>`).join('');
+  }
+
   function table(cols, rows) {
     $('thead').innerHTML = '<tr>' + cols.map(([l, n]) => `<th class="${n ? 'num' : ''}">${l}</th>`).join('') + '</tr>';
     $('tbody').innerHTML = rows.length ? rows.join('') : `<tr><td class="empty" colspan="${cols.length}">Nothing here today.</td></tr>`;
@@ -258,6 +268,7 @@
     $('sub').innerHTML = '';
     $('rule').innerHTML = '<b>Focus</b> = a BUY from any strategy (daily or weekly) where the stock\'s <b>weekly RSI freshly crossed above 70</b>, its <b>monthly RSI freshly crossed above 70</b>, or <b>both are above 70</b>.';
     shown = S.focus.map((r) => [r.s]);
+    setCount(S.focus.length, null, S.focus.length === 1 ? 'focus signal' : 'focus signals');
     table([['Symbol'], ['Strategy'], ['Timeframe'], ['SL', 1], ['Risk %', 1], ['Close', 1], ['RSI M', 1], ['RSI W', 1], ['Why']],
       S.focus.map((r) => `<tr class="focus">${symCell(r.s)}<td>${esc(r.strat)}</td><td>${esc(r.tf)}</td><td class="num">${fmt(r.sl)}</td><td class="num">${fmt(r.risk)}</td><td class="num">${fmt(r.close)}</td><td class="num">${rsiCell(r.rm)}</td><td class="num">${rsiCell(r.rw)}</td><td class="why">${esc(r.why)}</td></tr>`));
   }
@@ -268,6 +279,8 @@
     $('rule').innerHTML = v.rules && v.rules.Exit ? `<b>Exit:</b> ${esc(v.rules.Exit).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')}` : '';
     const rows = v[state.tf];
     shown = rows.map((r) => [r.s]);
+    const nb = rows.filter((r) => r.sig === 'BUY').length;
+    setCount(rows.length, null, `${state.tf === 'W' ? 'weekly' : 'daily'} signals (${nb} BUY · ${rows.length - nb} EXIT)`);
     table([['Symbol'], ['Signal'], ['SL', 1], ['Risk %', 1], ['Close', 1], ['RSI M', 1], ['RSI W', 1], ['In trade since'], ['P&L %', 1], ['Segment']],
       rows.map((r) => `<tr class="${r.focus ? 'focus' : ''}">${symCell(r.s)}<td>${pill(r.sig)}${r.focus ? ' ★' : ''}</td><td class="num">${fmt(r.sl)}</td><td class="num">${fmt(r.risk)}</td><td class="num">${fmt(r.close)}</td><td class="num">${rsiCell(r.rm)}</td><td class="num">${rsiCell(r.rw)}</td><td>${esc(r.since)}</td><td class="num">${pct(r.pnl)}</td><td>${esc(r.seg)}</td></tr>`));
   }
@@ -277,6 +290,7 @@
     $('sub').innerHTML = `<span class="note">${d.scanned} liquid F&amp;O stocks · last 1-hour candle: <b>${esc(d.last_candle)}</b></span>`;
     $('rule').innerHTML = esc(d.rules);
     shown = d.rows.map((r) => [r.s]);
+    setCount(d.rows.length, null, 'setups and open trades');
     table([['Symbol'], ['Status'], ['Setup'], ['Entry', 1], ['Since'], ['Stop', 1], ['Target', 1], ['Close', 1], ['P&L %', 1]],
       d.rows.map((r) => `<tr>${symCell(r.s)}<td>${pill(r.status)}</td><td>${esc(r.kind)} <span class="why">${esc(r.side)}</span></td><td class="num">${fmt(r.entry)}</td><td>${esc(r.since)}</td><td class="num">${fmt(r.stop)}</td><td class="num">${r.target == null ? '<span class="why">trail</span>' : fmt(r.target)}</td><td class="num">${fmt(r.close)}</td><td class="num">${pct(r.pnl)}</td></tr>`));
   }
@@ -319,6 +333,13 @@
       return typeof x === 'string' ? dir * x.localeCompare(y) : dir * (x - y);
     });
     shown = rows.map((r) => [r.s]);
+    const fl = [];
+    if (u.strong) fl.push('★ Strong only');
+    if (u.seg !== 'all') fl.push(u.seg);
+    if (u.rsi) fl.push('RSI > 60 on all 3');
+    if (u.adx) fl.push('ADX > 20 on D and W');
+    if (q) fl.push(`"${u.q.trim()}"`);
+    setCount(rows.length, S.universe.length, 'stocks', fl);
     const cols = [['Symbol', 's'], ['Mcap ₹ cr', 'mcap', 1], ['Price', 'price', 1], ['PE', 'pe', 1], ['EV / EBITDA', 'ev', 1],
       ['EPS growth 2y', 'g2', 1], ['vs M EMA20', 'dm', 1], ['vs Q EMA20', 'dq', 1], ['RSI  D · W · M', 'rsi'], ['ADX  D · W', 'adx'], ['Vol 5d / 30d', 'vol']];
     $('thead').innerHTML = '<tr>' + cols.map(([l, key, n]) => `<th class="${n ? 'num' : ''}${key === k ? ' sorted' : ''}" data-k="${key}">${l}${key === k ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
@@ -347,6 +368,9 @@
     const f = { all: () => true, n500: (r) => r.index === 'Nifty 500', fresh: (r) => r.fresh, weekly: (r) => r.weekly_above }[state.rsiFilter];
     const rows = RSI.filter((r) => r.exchange === 'NSE' && f(r));
     shown = rows.map((r) => [r.symbol, r.exchange]);
+    const all = RSI.filter((r) => r.exchange === 'NSE').length;
+    setCount(rows.length, all, 'NSE stocks with monthly RSI > 70',
+      state.rsiFilter === 'all' ? [] : [{ n500: 'Nifty 500', fresh: 'Fresh monthly cross', weekly: 'Weekly also > 70' }[state.rsiFilter]]);
     table([['Symbol'], ['Company', 0], ['Index'], ['Close', 1], ['Monthly RSI', 1], ['Prev', 1], ['Weekly RSI', 1], ['Fresh'], ['Strategy signal']],
       rows.map((r) => `<tr>${symCell(r.symbol, r.exchange)}<td class="why hide-sm">${esc(r.company)}</td><td>${esc(r.index)}</td><td class="num">${fmt(r.close)}</td><td class="num">${rsiCell(r.rsi)}</td><td class="num">${fmt(r.rsi_prev, 1)}</td><td class="num">${rsiCell(r.rsi_w)}</td><td>${r.fresh ? '<span class="pill buy">fresh</span>' : ''}</td><td class="why">${esc((sig[r.symbol] || []).join(' · '))}</td></tr>`));
   }
