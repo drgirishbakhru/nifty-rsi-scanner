@@ -226,6 +226,7 @@
       add('focus', '🎯 Focus', S.focus.length, 'BUY + strong RSI', S.focus.length > 0);
       for (const [k, v] of STRATS()) add(k, v.name, buys(k, 'W') + buys(k, 'D'), `${buys(k, 'W')} weekly · ${buys(k, 'D')} daily BUY`);
       if (S.intraday) add('intraday', 'Intraday Swing', S.intraday.rows.length, 'setups and open trades, 1-hour');
+      if (S.oi) add('oi', 'Nifty OI levels', esc(S.oi.day.split(' ').slice(1, 3).join(' ')), `call wall ${S.oi.cw} · put wall ${S.oi.pw}`);
       if (S.universe) add('n500', '★ Strong stocks', strongCount(), 'Nifty 500: RSI, ADX and volume all strong');
     }
     const hits = RSI.filter((r) => r.exchange === 'NSE');
@@ -240,6 +241,7 @@
       list.push(['focus', '🎯 Focus', S.focus.length]);
       for (const [k, v] of STRATS()) list.push([k, v.name.replace(' with ADX', ''), buys(k, 'W') + buys(k, 'D')]);
       if (S.intraday) list.push(['intraday', 'Intraday Swing', S.intraday.rows.length]);
+      if (S.oi) list.push(['oi', 'Nifty OI', 4 + S.oi.calls.length + S.oi.puts.length]);
       if (S.universe) list.push(['n500', 'Nifty 500', S.universe.length]);
     }
     list.push(['rsi', 'RSI > 70', RSI.filter((r) => r.exchange === 'NSE').length]);
@@ -293,6 +295,28 @@
     setCount(d.rows.length, null, 'setups and open trades');
     table([['Symbol'], ['Status'], ['Setup'], ['Entry', 1], ['Since'], ['Stop', 1], ['Target', 1], ['Close', 1], ['P&L %', 1]],
       d.rows.map((r) => `<tr>${symCell(r.s)}<td>${pill(r.status)}</td><td>${esc(r.kind)} <span class="why">${esc(r.side)}</span></td><td class="num">${fmt(r.entry)}</td><td>${esc(r.since)}</td><td class="num">${fmt(r.stop)}</td><td class="num">${r.target == null ? '<span class="why">trail</span>' : fmt(r.target)}</td><td class="num">${fmt(r.close)}</td><td class="num">${pct(r.pnl)}</td></tr>`));
+  }
+
+  // NIFTY option OI levels for the Pine script "Nifty 3m S1 + OI reversals"
+  function viewOI() {
+    const o = S.oi;
+    $('sub').innerHTML = `<span class="note">For <b>${esc(o.day)}</b> · nearest expiry ${esc(o.expiry)} · from NSE's close of the previous trading day</span>`;
+    $('rule').innerHTML = `<b>Paste into the Pine script's "OI levels line"</b> (Settings → Inputs, first box):`
+      + `<code id="oi-line" style="display:block;margin:8px 0;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font:500 .85rem var(--mono);word-break:break-all;user-select:all">${esc(o.line)}</code>`
+      + `<button type="button" class="btn solid" id="oi-copy">Copy line</button> <span class="note" id="oi-note" role="status"></span>`;
+    $('oi-copy').onclick = () => {
+      const done = () => { $('oi-note').textContent = 'Copied.'; };
+      if (navigator.clipboard) navigator.clipboard.writeText(o.line).then(done, () => { $('oi-note').textContent = 'Select the line above and copy it.'; });
+      else $('oi-note').textContent = 'Select the line above and copy it.';
+    };
+    shown = [];
+    const row = (label, k, strong, side) => `<tr><td>${esc(label)}</td><td class="num"><span class="${side === 'C' ? 'down' : 'up'}">${fmt(k, 0)}</span></td><td>${strong ? '<b>strong</b>' : ''}</td></tr>`;
+    const rows = [row('Call wall (highest call OI)', o.cw, true, 'C'), row('Put wall (highest put OI)', o.pw, true, 'P'),
+                  row('Call wall within 3% of spot', o.cwn, false, 'C'), row('Put wall within 3% of spot', o.pwn, false, 'P')]
+      .concat(o.calls.map(([k, st], i) => row(`Top call strike ${i + 1}`, k, st, 'C')))
+      .concat(o.puts.map(([k, st], i) => row(`Top put strike ${i + 1}`, k, st, 'P')));
+    setCount(rows.length, null, 'levels (red = calls / resistance, green = puts / support)');
+    table([['Level'], ['Strike', 1], ['']], rows);
   }
 
   // Strong = RSI > 60 on at least 2 of D/W/M, ADX > 20 on daily or weekly, and 5-day volume >= 150% of the 30-day average
@@ -379,6 +403,7 @@
     header(); tiles(); tabs();
     if (state.tab === 'focus') viewFocus();
     else if (state.tab === 'intraday') viewIntraday();
+    else if (state.tab === 'oi') viewOI();
     else if (state.tab === 'rsi') viewRsi();
     else if (state.tab === 'n500') viewUniverse();
     else viewStrategy(state.tab);
