@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "intraday = Intraday Swing tab only; full = everything; wide = Wider universe tab only"
+        description: "login = only save the Zerodha login; intraday = Intraday Swing tab only; full = everything; wide = Wider universe tab only"
         type: choice
-        options: [intraday, full, wide]
+        options: [intraday, full, wide, login]
         default: intraday
       request_token:
         description: "Filled in by the page after a Zerodha login (leave empty)"
@@ -63,6 +63,7 @@ jobs:
             app/data/hourly
             app/data/candles.sqlite
             app/data/fundamentals.csv
+            app/data/fundamentals_wide.csv
             app/data/nifty500.csv
             app/data/universe_wide.csv
             app/data/nse_cm
