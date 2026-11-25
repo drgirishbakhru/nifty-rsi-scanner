@@ -57,7 +57,7 @@ jobs:
       - run: pip install -q -r app/requirements.txt
 
       - name: Restore saved candles
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             app/data/hourly
@@ -91,3 +91,20 @@ jobs:
       - name: Remove the login before the candles are saved
         if: always()
         run: rm -f app/data/kite_token.json
+
+      # Saved even when the update fails, so a long download isn't lost and the next run starts from it
+      - name: Save candles
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            app/data/hourly
+            app/data/candles.sqlite
+            app/data/fundamentals.csv
+            app/data/fundamentals_wide.csv
+            app/data/nifty500.csv
+            app/data/universe_wide.csv
+            app/data/nse_cm
+            app/data/kite_quoted_days.json
+            app/data/yahoo_ref_checked
+          key: candles-${{ github.run_id }}
