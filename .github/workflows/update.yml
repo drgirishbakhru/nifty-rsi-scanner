@@ -1,6 +1,7 @@
 name: Strategy update
 
-# Started by the dashboard page's buttons ("Log in to Zerodha", "Update Intraday Swing", "Update everything"),
+# Started by the dashboard page's buttons ("Log in to Zerodha", "Update Intraday Swing", "Update everything",
+# "Update wider universe"),
 # by the "Run workflow" button on GitHub, and every hour in market hours (skipped quietly when there is no
 # Zerodha login that day). This repo is public, so its logs are too: the scripts print only short status lines.
 
@@ -8,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "intraday = Intraday Swing tab only; full = everything"
+        description: "intraday = Intraday Swing tab only; full = everything; wide = Wider universe tab only"
         type: choice
-        options: [intraday, full]
+        options: [intraday, full, wide]
         default: intraday
       request_token:
         description: "Filled in by the page after a Zerodha login (leave empty)"
@@ -63,6 +64,8 @@ jobs:
             app/data/candles.sqlite
             app/data/fundamentals.csv
             app/data/nifty500.csv
+            app/data/universe_wide.csv
+            app/data/nse_cm
             app/data/kite_quoted_days.json
             app/data/yahoo_ref_checked
           key: candles-${{ github.run_id }}

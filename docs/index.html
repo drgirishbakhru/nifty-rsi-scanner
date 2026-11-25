@@ -133,6 +133,7 @@
       <a class="btn" id="kite-login" href="#">Log in to Zerodha</a>
       <button type="button" class="btn solid" id="upd-intraday">Update Intraday Swing</button>
       <button type="button" class="btn" id="upd-full">Update everything</button>
+      <button type="button" class="btn" id="upd-wide">Update wider universe</button>
     </div>
     <p class="note" id="upd-status" role="status" aria-live="polite"></p>
   </section>
@@ -172,7 +173,8 @@
   let S = null;            // decrypted signals
   let RSI = [];            // public RSI rows
   let RSI_SUM = null;
-  const state = { tab: 'focus', tf: 'W', rsiFilter: 'all', u: { seg: 'all', rsi: false, adx: false, q: '', k: 'mcap', dir: -1 } };
+  const state = { tab: 'focus', tf: 'W', rsiFilter: 'all', u: { seg: 'all', rsi: false, adx: false, q: '', k: 'mcap', dir: -1 },
+                  w: { view: 'sig', seg: 'Micro', tf: 'all', q: '' } };
   let shown = [];          // [symbol, exchange] for the copy button
 
   // ---- data ----
@@ -217,7 +219,7 @@
   let ENC = null, PW = null, KEY = null, busy = false;
   const API = 'https://api.github.com';
   const say = (h) => { $('upd-status').innerHTML = h; };
-  const setBusy = (b) => { busy = b; ['upd-intraday', 'upd-full'].forEach((id) => { $(id).disabled = b; }); };
+  const setBusy = (b) => { busy = b; ['upd-intraday', 'upd-full', 'upd-wide'].forEach((id) => { $(id).disabled = b; }); };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const timeIST = (d) => d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
   function lastSixAM() {   // Zerodha logins expire at 6 AM IST
@@ -247,6 +249,7 @@
     $('kite-login').href = KEY.kite_login;
     $('upd-intraday').onclick = () => run('intraday');
     $('upd-full').onclick = () => run('full');
+    $('upd-wide').onclick = () => run('wide');
     let rt = null;
     try { rt = sessionStorage.getItem('kite-rt'); sessionStorage.removeItem('kite-rt'); } catch {}
     if (rt) run('intraday', rt);
@@ -258,7 +261,7 @@
     if (!rt && !(await kiteLogin())) { say(await loginNote()); return; }
     setBusy(true);
     const t0 = Date.now();
-    const what = rt ? 'Saving your Zerodha login and updating Intraday Swing' : mode === 'full' ? 'Updating everything (a few minutes)' : 'Updating Intraday Swing';
+    const what = rt ? 'Saving your Zerodha login and updating Intraday Swing' : mode === 'full' ? 'Updating everything (a few minutes)' : mode === 'wide' ? 'Updating the wider universe (first run ~15 minutes, later a few)' : 'Updating Intraday Swing';
     say(`${what}… starting.`);
     try {
       const r = await gh(`/repos/${KEY.repo}/actions/workflows/${KEY.workflow}/dispatches`, {
@@ -323,6 +326,7 @@
       if (S.intraday) add('intraday', 'Intraday Swing', S.intraday.rows.length, 'setups and open trades, 1-hour');
       if (S.oi) add('oi', 'Nifty OI levels', esc(S.oi.day.split(' ').slice(1, 3).join(' ')), `call wall ${S.oi.cw} · put wall ${S.oi.pw}`);
       if (S.universe) add('n500', '★ Strong stocks', strongCount(), 'Nifty 500: RSI, ADX and volume all strong');
+      if (S.wide) { const wb = S.wide.rows.filter((r) => r.sig === 'BUY'); add('wide', 'Wider universe', wb.length, `BUYs outside the Nifty 500 · ${wb.filter((r) => r.seg === 'Micro').length} micro cap`, wb.some((r) => r.focus)); }
     }
     const hits = RSI.filter((r) => r.exchange === 'NSE');
     add('rsi', 'Monthly RSI > 70', hits.length, `${hits.filter((r) => r.fresh).length} fresh crosses`);
@@ -338,6 +342,7 @@
       if (S.intraday) list.push(['intraday', 'Intraday Swing', S.intraday.rows.length]);
       if (S.oi) list.push(['oi', 'Nifty OI', 4 + S.oi.calls.length + S.oi.puts.length]);
       if (S.universe) list.push(['n500', 'Nifty 500', S.universe.length]);
+      if (S.wide) list.push(['wide', 'Wider universe', S.wide.rows.filter((r) => r.sig === 'BUY').length]);
     }
     list.push(['rsi', 'RSI > 70', RSI.filter((r) => r.exchange === 'NSE').length]);
     if (!list.some(([k]) => k === state.tab)) state.tab = list[0][0];
@@ -479,6 +484,49 @@
     }).join('') : `<tr><td class="empty" colspan="${cols.length}">No stocks match.</td></tr>`;
   }
 
+  // Liquid NSE stocks outside the Nifty 500, scanned on demand (publish.py --wide / "Update wider universe")
+  const SEGS = ['Micro', 'Small', 'Mid', 'Large'];
+  function viewWide() {
+    const W = S.wide, w = state.w;
+    const list = w.view === 'rsi' ? W.rsi : W.rows.filter((r) => w.tf === 'all' || r.tf === w.tf);
+    const n = (seg) => list.filter((r) => seg === 'all' || r.seg === seg).length;
+    const chip = (key, val, label) => `<button class="chip small" data-key="${key}" data-val="${val}" aria-pressed="${w[key] === val}">${label}</button>`;
+    $('sub').innerHTML = [chip('view', 'sig', 'Strategy signals'), chip('view', 'rsi', 'Monthly RSI &gt; 70'),
+      '<span class="sep"></span>', chip('seg', 'all', `All <span class="n">${n('all')}</span>`),
+      ...SEGS.map((g) => chip('seg', g, `${g} <span class="n">${n(g)}</span>`)),
+      ...(w.view === 'sig' ? ['<span class="sep"></span>', chip('tf', 'all', 'D + W'), chip('tf', 'W', 'Weekly'), chip('tf', 'D', 'Daily')] : []),
+      `<input type="search" id="wq" placeholder="Search symbol or industry" value="${esc(w.q)}" aria-label="Search">`].join('');
+    $('sub').querySelectorAll('[data-key]').forEach((b) => b.onclick = () => { w[b.dataset.key] = b.dataset.val; render(); });
+    $('wq').oninput = (e) => { w.q = e.target.value; drawWide(); };
+    const sg = W.segments;
+    const tot = SEGS.reduce((a, g) => a + (sg[g] || 0), 0);
+    $('rule').innerHTML = `<b>${tot}</b> liquid NSE stocks outside the Nifty 500 (${esc(W.filter)}): ${SEGS.map((g) => `${sg[g] || 0} ${g}`).join(' · ')}${W.scanned < tot ? ` (${W.scanned} with Kite data scanned)` : ''}. `
+      + 'Index members keep NSE\'s tag (Micro = Nifty Microcap 250 and the rest); stocks in no index yet, mostly recent IPOs, are tagged by market cap (<span class="why">mcap</span>). '
+      + `Scanned on demand: candle <b>${esc(W.candle)}</b>, published ${esc(W.generated)}${W.week_forming ? ' — weekly signals can change until Friday\'s close' : ''}. ★ = focus (BUY + strong weekly/monthly RSI).`;
+    drawWide();
+  }
+
+  function drawWide() {
+    const W = S.wide, w = state.w, q = w.q.trim().toLowerCase();
+    const keep = (r) => (w.seg === 'all' || r.seg === w.seg) && (!q || r.s.toLowerCase().includes(q) || (r.ind || '').toLowerCase().includes(q));
+    const segCell = (r) => `<td>${esc(r.seg)}${r.by === 'mcap' ? ' <span class="why">mcap</span>' : ''}${r.new ? ` <span class="why">listed ${esc(r.new.slice(5))}</span>` : ''}</td>`;
+    const fl = [w.seg === 'all' ? '' : w.seg, q ? `"${w.q.trim()}"` : ''].filter(Boolean);
+    if (w.view === 'rsi') {
+      const rows = W.rsi.filter(keep);
+      shown = rows.map((r) => [r.s]);
+      setCount(rows.length, W.rsi.length, 'stocks with monthly RSI > 70', fl);
+      table([['Symbol'], ['Monthly RSI', 1], ['Prev', 1], ['Weekly RSI', 1], ['Fresh'], ['Close', 1], ['Mcap ₹ cr', 1], ['Traded ₹ cr/day', 1], ['Segment'], ['Industry']],
+        rows.map((r) => `<tr>${symCell(r.s)}<td class="num">${rsiCell(r.rm)}</td><td class="num">${fmt(r.rmp, 1)}</td><td class="num">${rsiCell(r.rw)}</td><td>${r.mf ? '<span class="pill buy">fresh</span>' : ''}</td><td class="num">${fmt(r.close)}</td><td class="num">${fmt(r.mcap, 0)}</td><td class="num">${fmt(r.val, 1)}</td>${segCell(r)}<td class="why">${esc(r.ind)}</td></tr>`));
+      return;
+    }
+    const rows = W.rows.filter((r) => (w.tf === 'all' || r.tf === w.tf) && keep(r));
+    shown = [...new Set(rows.map((r) => r.s))].map((s) => [s]);
+    const nb = rows.filter((r) => r.sig === 'BUY').length;
+    setCount(rows.length, null, `signals (${nb} BUY · ${rows.length - nb} EXIT)`, fl);
+    table([['Symbol'], ['Strategy'], ['TF'], ['Signal'], ['SL', 1], ['Risk %', 1], ['Close', 1], ['RSI M', 1], ['RSI W', 1], ['In trade since'], ['P&L %', 1], ['Mcap ₹ cr', 1], ['Segment']],
+      rows.map((r) => `<tr class="${r.focus ? 'focus' : ''}">${symCell(r.s)}<td>${esc(r.strat.replace(' with ADX', ''))}</td><td>${r.tf}</td><td>${pill(r.sig)}${r.focus ? ' ★' : ''}${r.why ? `<div class="why">${esc(r.why)}</div>` : ''}</td><td class="num">${fmt(r.sl)}</td><td class="num">${fmt(r.risk)}</td><td class="num">${fmt(r.close)}</td><td class="num">${rsiCell(r.rm)}</td><td class="num">${rsiCell(r.rw)}</td><td>${esc(r.since)}</td><td class="num">${pct(r.pnl)}</td><td class="num">${fmt(r.mcap, 0)}</td>${segCell(r)}</tr>`));
+  }
+
   function viewRsi() {
     subChips([['all', 'All NSE'], ['n500', 'Nifty 500'], ['fresh', 'Fresh monthly cross'], ['weekly', 'Weekly also > 70']], 'rsiFilter');
     $('rule').innerHTML = 'Monthly RSI(14) above 70 on the current month\'s candle (all NSE stocks, market cap ≥ ₹1,000 cr). <b>Fresh</b> = last month closed at or below 70.';
@@ -501,6 +549,7 @@
     else if (state.tab === 'oi') viewOI();
     else if (state.tab === 'rsi') viewRsi();
     else if (state.tab === 'n500') viewUniverse();
+    else if (state.tab === 'wide') viewWide();
     else viewStrategy(state.tab);
     $('copy-note').textContent = '';
   }
