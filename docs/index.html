@@ -100,6 +100,10 @@
   .lock input[type=password] { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
   .lock label { font-size: .82rem; color: var(--muted); display: flex; gap: 6px; align-items: center; }
   .err { color: var(--down); font-size: .82rem; min-height: 1.2em; }
+  .upd { display: grid; gap: 8px; }
+  .upd a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .upd .note a { color: var(--accent); }
   footer { font-size: .75rem; color: var(--muted); }
   footer a { color: var(--muted); }
   @media (max-width: 40rem) { .hide-sm { display: none; } }
@@ -122,6 +126,15 @@
     </form>
     <label><input type="checkbox" id="remember" checked> Remember on this device</label>
     <div class="err" id="err" role="status"></div>
+  </section>
+
+  <section class="card upd" id="upd" hidden aria-label="Update">
+    <div class="controls">
+      <a class="btn" id="kite-login" href="#">Log in to Zerodha</a>
+      <button type="button" class="btn solid" id="upd-intraday">Update Intraday Swing</button>
+      <button type="button" class="btn" id="upd-full">Update everything</button>
+    </div>
+    <p class="note" id="upd-status" role="status" aria-live="polite"></p>
   </section>
 
   <section class="tiles" id="tiles"></section>
@@ -177,9 +190,10 @@
     const [enc, rows, sum] = await Promise.all([get('data/signals.enc.json'), get('data/rows.json'), get('data/summary.json')]);
     RSI = rows || []; RSI_SUM = sum && sum[0];
     if (!enc) { render(); $('take').textContent = 'No strategy signals published yet.'; return; }
+    ENC = enc;
     const saved = store.get('scan-pw');
     if (saved) {
-      try { S = await decrypt(enc, saved); } catch { store.del('scan-pw'); }
+      try { S = await decrypt(enc, saved); PW = saved; } catch { store.del('scan-pw'); }
     }
     if (!S) {
       $('lock').hidden = false;
@@ -188,12 +202,93 @@
         $('err').textContent = 'Unlocking…';
         try {
           S = await decrypt(enc, $('pw').value);
+          PW = $('pw').value; initUpdate();
           if ($('remember').checked) store.set('scan-pw', $('pw').value);
           $('lock').hidden = true; $('err').textContent = ''; state.tab = 'focus'; render();
         } catch { $('err').textContent = 'Wrong password. Try again.'; }
       };
     }
     render();
+    if (S) initUpdate();
+  }
+
+  // ---- Update buttons: start the "Strategy update" workflow on GitHub ----
+  // The GitHub key sits in data/key.enc.json, locked with the same password as the signals.
+  let ENC = null, PW = null, KEY = null, busy = false;
+  const API = 'https://api.github.com';
+  const say = (h) => { $('upd-status').innerHTML = h; };
+  const setBusy = (b) => { busy = b; ['upd-intraday', 'upd-full'].forEach((id) => { $(id).disabled = b; }); };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const timeIST = (d) => d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+  function lastSixAM() {   // Zerodha logins expire at 6 AM IST
+    const ist = new Date(Date.now() + 5.5 * 3600e3);
+    let t = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate(), 0, 30);
+    if (Date.now() < t) t -= 86400e3;
+    return t;
+  }
+  async function kiteLogin() {   // time of today's Zerodha login, or null
+    const k = await get('data/kite.enc.json');
+    const t = k && Date.parse(k.created);
+    return t && t >= lastSixAM() ? new Date(t) : null;
+  }
+  async function loginNote() {
+    const t = await kiteLogin();
+    return t ? `Zerodha: logged in today at ${timeIST(t)}.` : 'Zerodha: <b>not logged in today</b>. Tap "Log in to Zerodha" first.';
+  }
+  const gh = (path, opt = {}) => fetch(API + path, { ...opt, headers: { Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${KEY.gh}`, 'X-GitHub-Api-Version': '2022-11-28', ...(opt.headers || {}) } });
+
+  async function initUpdate() {
+    if (KEY || !PW) return;
+    const enc = await get('data/key.enc.json');
+    if (!enc) return;                       // buttons not set up (setup_cloud.py)
+    try { KEY = await decrypt(enc, PW); } catch { return; }
+    $('upd').hidden = false;
+    $('kite-login').href = KEY.kite_login;
+    $('upd-intraday').onclick = () => run('intraday');
+    $('upd-full').onclick = () => run('full');
+    let rt = null;
+    try { rt = sessionStorage.getItem('kite-rt'); sessionStorage.removeItem('kite-rt'); } catch {}
+    if (rt) run('intraday', rt);
+    else say(await loginNote());
+  }
+
+  async function run(mode, rt = '') {
+    if (busy) return;
+    if (!rt && !(await kiteLogin())) { say(await loginNote()); return; }
+    setBusy(true);
+    const t0 = Date.now();
+    const what = rt ? 'Saving your Zerodha login and updating Intraday Swing' : mode === 'full' ? 'Updating everything (a few minutes)' : 'Updating Intraday Swing';
+    say(`${what}… starting.`);
+    try {
+      const r = await gh(`/repos/${KEY.repo}/actions/workflows/${KEY.workflow}/dispatches`, {
+        method: 'POST', body: JSON.stringify({ ref: 'main', inputs: { mode, request_token: rt } }) });
+      if (r.status !== 204) throw new Error(r.status === 401 || r.status === 403 ? 'the GitHub key was refused (expired?). Run setup_cloud.py again.' : `GitHub said ${r.status}.`);
+      let runInfo = null;
+      for (let i = 0; i < 225; i++) {          // up to ~30 minutes
+        await sleep(8000);
+        const secs = Math.round((Date.now() - t0) / 1000);
+        const q = await gh(`/repos/${KEY.repo}/actions/workflows/${KEY.workflow}/runs?event=workflow_dispatch&per_page=5`).then((x) => x.json()).catch(() => null);
+        runInfo = q && (q.workflow_runs || []).find((w) => Date.parse(w.created_at) >= t0 - 10000);
+        say(`${what}… ${runInfo ? (runInfo.status === 'queued' ? 'waiting for GitHub' : 'running') : 'starting'} (${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}).`);
+        if (runInfo && runInfo.status === 'completed') break;
+      }
+      if (!runInfo || runInfo.status !== 'completed') throw new Error('it is taking too long. Check GitHub.');
+      if (runInfo.conclusion !== 'success') {
+        say(`The update failed. <a href="${esc(runInfo.html_url)}" target="_blank" rel="noopener">See what happened</a>. ${await loginNote()}`);
+        return;
+      }
+      say(`${what}… done on GitHub; waiting for the page to refresh.`);
+      const old = ENC && ENC.ct;
+      for (let i = 0; i < 30; i++) {           // GitHub Pages takes about a minute
+        const enc = await get('data/signals.enc.json');
+        if (enc && enc.ct !== old) { ENC = enc; S = await decrypt(enc, PW); render(); break; }
+        await sleep(8000);
+      }
+      say(`Updated at ${timeIST(new Date())}. ${await loginNote()}`);
+    } catch (e) {
+      say(`Couldn't update: ${esc(e.message)}`);
+    } finally { setBusy(false); }
   }
 
   // ---- views ----
@@ -289,7 +384,7 @@
 
   function viewIntraday() {
     const d = S.intraday;
-    $('sub').innerHTML = `<span class="note">${d.scanned} liquid F&amp;O stocks · last 1-hour candle: <b>${esc(d.last_candle)}</b></span>`;
+    $('sub').innerHTML = `<span class="note">${d.scanned} liquid F&amp;O stocks · last 1-hour candle: <b>${esc(d.last_candle)}</b>${d.updated ? ` · updated ${esc(d.updated)}` : ''}</span>`;
     $('rule').innerHTML = esc(d.rules);
     shown = d.rows.map((r) => [r.s]);
     setCount(d.rows.length, null, 'setups and open trades');
@@ -415,6 +510,13 @@
     try { await navigator.clipboard.writeText(txt); $('copy-note').textContent = `Copied ${shown.length} symbols.`; }
     catch { $('copy-note').textContent = 'Copy failed. Select and copy manually: ' + txt; }
   };
+  {   // back from Zerodha's login: keep the one-time code for the Update box, and clean the address bar
+    const qs = new URLSearchParams(location.search);
+    if (qs.get('request_token')) {
+      if (qs.get('status') === 'success') { try { sessionStorage.setItem('kite-rt', qs.get('request_token')); } catch {} }
+      history.replaceState(null, '', location.pathname);
+    }
+  }
   $('forget').onclick = (e) => { e.preventDefault(); store.del('scan-pw'); location.reload(); };
   start();
 })();

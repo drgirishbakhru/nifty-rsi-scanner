@@ -1,0 +1,89 @@
+name: Strategy update
+
+# Started by the dashboard page's buttons ("Log in to Zerodha", "Update Intraday Swing", "Update everything"),
+# by the "Run workflow" button on GitHub, and every hour in market hours (skipped quietly when there is no
+# Zerodha login that day). This repo is public, so its logs are too: the scripts print only short status lines.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "intraday = Intraday Swing tab only; full = everything"
+        type: choice
+        options: [intraday, full]
+        default: intraday
+      request_token:
+        description: "Filled in by the page after a Zerodha login (leave empty)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "46 4-9 * * 1-5"   # 10:16 to 15:16 IST, just after each 1-hour candle closes
+    - cron: "1 10 * * 1-5"     # 15:31 IST, after the day's last candle
+
+permissions:
+  contents: write
+
+concurrency:
+  group: strategy-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Hide the login code in the log
+        env:
+          REQUEST_TOKEN: ${{ inputs.request_token }}
+        run: '[ -n "$REQUEST_TOKEN" ] && echo "::add-mask::$REQUEST_TOKEN" || true'
+
+      - uses: actions/checkout@v4
+        with:
+          path: site
+
+      - uses: actions/checkout@v4
+        with:
+          repository: drgirishbakhru/kite-strategy-dashboard
+          token: ${{ secrets.DASHBOARD_REPO_TOKEN }}
+          path: app
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: app/requirements.txt
+
+      - run: pip install -q -r app/requirements.txt
+
+      - name: Restore saved candles
+        uses: actions/cache@v4
+        with:
+          path: |
+            app/data/hourly
+            app/data/candles.sqlite
+            app/data/fundamentals.csv
+            app/data/nifty500.csv
+            app/data/kite_quoted_days.json
+            app/data/yahoo_ref_checked
+          key: candles-${{ github.run_id }}
+          restore-keys: candles-
+
+      - name: Update
+        working-directory: app
+        env:
+          TZ: Asia/Kolkata
+          MODE: ${{ inputs.mode || 'intraday' }}
+          REQUEST_TOKEN: ${{ inputs.request_token }}
+          KITE_API_KEY: ${{ secrets.KITE_API_KEY }}
+          KITE_API_SECRET: ${{ secrets.KITE_API_SECRET }}
+          KITE_TOKEN_KEY: ${{ secrets.KITE_TOKEN_KEY }}
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+          DASHBOARD_SITE: ${{ github.workspace }}/site
+        run: |
+          git -C ../site config user.name "strategy-update-bot"
+          git -C ../site config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python cloud_run.py
+
+      - name: Remove the login before the candles are saved
+        if: always()
+        run: rm -f app/data/kite_token.json
