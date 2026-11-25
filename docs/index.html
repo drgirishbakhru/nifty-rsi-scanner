@@ -174,7 +174,8 @@
   let RSI = [];            // public RSI rows
   let RSI_SUM = null;
   const state = { tab: 'focus', tf: 'W', rsiFilter: 'all', u: { seg: 'all', rsi: false, adx: false, q: '', k: 'mcap', dir: -1 },
-                  w: { view: 'sig', seg: 'Micro', tf: 'all', q: '' } };
+                  w: { view: 'stocks', seg: 'Micro', tf: 'all', q: '' },
+                  wu: { seg: 'Micro', rsi: false, adx: false, q: '', k: 'mcap', dir: -1 } };
   let shown = [];          // [symbol, exchange] for the copy button
 
   // ---- data ----
@@ -252,7 +253,7 @@
     $('upd-wide').onclick = () => run('wide');
     let rt = null;
     try { rt = sessionStorage.getItem('kite-rt'); sessionStorage.removeItem('kite-rt'); } catch {}
-    if (rt) run('intraday', rt);
+    if (rt) run('login', rt);
     else say(await loginNote());
   }
 
@@ -261,7 +262,7 @@
     if (!rt && !(await kiteLogin())) { say(await loginNote()); return; }
     setBusy(true);
     const t0 = Date.now();
-    const what = rt ? 'Saving your Zerodha login and updating Intraday Swing' : mode === 'full' ? 'Updating everything (a few minutes)' : mode === 'wide' ? 'Updating the wider universe (first run ~15 minutes, later a few)' : 'Updating Intraday Swing';
+    const what = mode === 'login' ? 'Saving your Zerodha login' : mode === 'full' ? 'Updating everything (a few minutes)' : mode === 'wide' ? 'Updating the wider universe (first run ~15 minutes, later a few)' : 'Updating Intraday Swing';
     say(`${what}… starting.`);
     try {
       const r = await gh(`/repos/${KEY.repo}/actions/workflows/${KEY.workflow}/dispatches`, {
@@ -281,6 +282,7 @@
         say(`The update failed. <a href="${esc(runInfo.html_url)}" target="_blank" rel="noopener">See what happened</a>. ${await loginNote()}`);
         return;
       }
+      if (mode === 'login') { say(`${await loginNote()} Nothing was scanned; use the buttons when you want an update.`); return; }
       say(`${what}… done on GitHub; waiting for the page to refresh.`);
       const old = ENC && ENC.ct;
       for (let i = 0; i < 30; i++) {           // GitHub Pages takes about a minute
@@ -423,15 +425,22 @@
   const VOL_HOT = 150;
   const nRsi = (r) => [r.rd, r.rw, r.rm].filter((v) => v != null && v > 60).length;
   const isStrong = (r) => nRsi(r) >= 2 && ((r.ad ?? 0) > 20 || (r.aw ?? 0) > 20) && (r.vol ?? 0) >= VOL_HOT;
-  const strongCount = () => (S && S.universe ? S.universe.filter(isStrong).length : 0);
+  const strongCount = (rows = S && S.universe) => (rows ? rows.filter(isStrong).length : 0);
 
-  function viewUniverse() {
-    const u = state.u;
+  // The stock table: the Nifty 500 tab, or the Wider universe tab's "Stocks" view (wide = true)
+  let UV = { rows: [], u: null, wide: false };
+  function viewUniverse(wide = false, pre = '') {
+    const rows0 = wide ? S.wide.universe : S.universe, u = wide ? state.wu : state.u;
+    UV = { rows: rows0, u, wide };
+    const segs = wide ? ['Large', 'Mid', 'Small', 'Micro'] : ['Large', 'Mid', 'Small'];
+    const segN = (g) => rows0.filter((r) => g === 'all' || r.seg === g).length;
     const chip = (key, val, label) => `<button class="chip small" data-key="${key}" data-val="${val}" aria-pressed="${String(u[key]) === String(val)}">${label}</button>`;
     $('sub').innerHTML = [
-      `<button class="chip small" data-tog="strong" aria-pressed="${!!u.strong}">★ Strong only <span class="n">${strongCount()}</span></button>`,
+      pre,
+      `<button class="chip small" data-tog="strong" aria-pressed="${!!u.strong}">★ Strong only <span class="n">${strongCount(rows0)}</span></button>`,
       '<span class="sep"></span>',
-      chip('seg', 'all', 'All'), chip('seg', 'Large', 'Large'), chip('seg', 'Mid', 'Mid'), chip('seg', 'Small', 'Small'),
+      chip('seg', 'all', wide ? `All <span class="n">${segN('all')}</span>` : 'All'),
+      ...segs.map((g) => chip('seg', g, wide ? `${g} <span class="n">${segN(g)}</span>` : g)),
       '<span class="sep"></span>',
       `<button class="chip small" data-tog="rsi" aria-pressed="${u.rsi}">RSI &gt; 60 on all 3</button>`,
       `<button class="chip small" data-tog="adx" aria-pressed="${u.adx}">ADX &gt; 20 on D and W</button>`,
@@ -439,15 +448,15 @@
     $('sub').querySelectorAll('[data-key]').forEach((b) => b.onclick = () => { u[b.dataset.key] = b.dataset.val; render(); });
     $('sub').querySelectorAll('[data-tog]').forEach((b) => b.onclick = () => { u[b.dataset.tog] = !u[b.dataset.tog]; render(); });
     $('uq').oninput = (e) => { u.q = e.target.value; drawUniverse(); };
-    $('rule').innerHTML = `<b>★ Strong</b> (highlighted) = RSI above 60 on at least 2 of daily, weekly and monthly, ADX above 20 on daily or weekly, and last 5 days' volume at least ${VOL_HOT}% of the 30-day average. `
+    $('rule').innerHTML = (wide ? wideNote() + '<br>' : '') + `<b>★ Strong</b> (highlighted) = RSI above 60 on at least 2 of daily, weekly and monthly, ADX above 20 on daily or weekly, and last 5 days' volume at least ${VOL_HOT}% of the 30-day average. `
       + '<b>vs EMA20</b> = price above (+) or below (−) the monthly / quarterly EMA20. <b>EPS growth</b> = analysts\' expected growth over this financial year and next. '
       + 'Green badges are above the level (RSI 60, ADX 20). Fundamentals from Yahoo, refreshed weekly. Click a column to sort.';
     drawUniverse();
   }
 
   function drawUniverse() {
-    const u = state.u, q = u.q.trim().toLowerCase();
-    let rows = S.universe.filter((r) => (u.seg === 'all' || r.seg === u.seg) && (!u.rsi || r.rsi60) && (!u.strong || isStrong(r))
+    const { u, wide } = UV, q = u.q.trim().toLowerCase();
+    let rows = UV.rows.filter((r) => (u.seg === 'all' || r.seg === u.seg) && (!u.rsi || r.rsi60) && (!u.strong || isStrong(r))
       && (!u.adx || (r.ad > 20 && r.aw > 20)) && (!q || r.s.toLowerCase().includes(q) || (r.ind || '').toLowerCase().includes(q)));
     const k = u.k, dir = u.dir;
     const val = (r) => k === 'rsi' ? nRsi(r) * 1000 + (r.rw ?? 0) : k === 'adx' ? Math.max(r.ad ?? 0, r.aw ?? 0) : r[k];
@@ -463,7 +472,7 @@
     if (u.rsi) fl.push('RSI > 60 on all 3');
     if (u.adx) fl.push('ADX > 20 on D and W');
     if (q) fl.push(`"${u.q.trim()}"`);
-    setCount(rows.length, S.universe.length, 'stocks', fl);
+    setCount(rows.length, UV.rows.length, 'stocks', fl);
     const cols = [['Symbol', 's'], ['Mcap ₹ cr', 'mcap', 1], ['Price', 'price', 1], ['PE', 'pe', 1], ['EV / EBITDA', 'ev', 1],
       ['EPS growth 2y', 'g2', 1], ['vs M EMA20', 'dm', 1], ['vs Q EMA20', 'dq', 1], ['RSI  D · W · M', 'rsi'], ['ADX  D · W', 'adx'], ['Vol 5d / 30d', 'vol']];
     $('thead').innerHTML = '<tr>' + cols.map(([l, key, n]) => `<th class="${n ? 'num' : ''}${key === k ? ' sorted' : ''}" data-k="${key}">${l}${key === k ? (dir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
@@ -477,7 +486,7 @@
       : `<span class="vol"><span class="vbar"><i class="${v >= VOL_HOT ? 'hot' : ''}" style="width:${Math.min(v, 300) / 3}%"></i></span><span class="${v >= VOL_HOT ? 'hi' : ''}">${fmt(v, 0)}%</span></span>`;
     $('tbody').innerHTML = rows.length ? rows.map((r) => {
       const st = isStrong(r);
-      return `<tr class="${st ? 'focus' : ''}"><td class="sym stick">${st ? '★ ' : ''}<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(r.s))}" target="_blank" rel="noopener">${esc(r.s)}</a><div class="why">${esc(r.seg)}</div></td>`
+      return `<tr class="${st ? 'focus' : ''}"><td class="sym stick">${st ? '★ ' : ''}<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(r.s))}" target="_blank" rel="noopener">${esc(r.s)}</a><div class="why">${esc(r.seg)}${wide && r.by === 'no mcap' ? ' · no mcap' : ''}${wide && r.new ? ` · listed ${esc(r.new.slice(5))}` : ''}</div></td>`
         + `<td class="num">${plain(r.mcap, 0)}</td><td class="num">${plain(r.price, 2)}</td><td class="num">${plain(r.pe)}</td><td class="num">${plain(r.ev)}</td>`
         + `<td class="num">${signed(r.g2)}</td><td class="num">${signed(r.dm)}</td><td class="num">${signed(r.dq)}</td>`
         + `<td class="nowrap">${badge(r.rd, 60)}${badge(r.rw, 60)}${badge(r.rm, 60)}</td><td class="nowrap">${badge(r.ad, 20)}${badge(r.aw, 20)}</td><td>${vol(r.vol)}</td></tr>`;
@@ -488,28 +497,40 @@
   const SEGS = ['Micro', 'Small', 'Mid', 'Large'];
   function viewWide() {
     const W = S.wide, w = state.w;
+    if (!W.universe && w.view === 'stocks') w.view = 'sig';
+    const vchip = (val, label) => `<button class="chip small" data-wv="${val}" aria-pressed="${w.view === val}">${label}</button>`;
+    const views = (W.universe ? vchip('stocks', 'Stocks') : '') + vchip('sig', 'Strategy signals') + vchip('rsi', 'Monthly RSI &gt; 70') + '<span class="sep"></span>';
+    if (w.view === 'stocks') {
+      viewUniverse(true, views);
+      $('sub').querySelectorAll('[data-wv]').forEach((b) => b.onclick = () => { w.view = b.dataset.wv; render(); });
+      return;
+    }
     const list = w.view === 'rsi' ? W.rsi : W.rows.filter((r) => w.tf === 'all' || r.tf === w.tf);
     const n = (seg) => list.filter((r) => seg === 'all' || r.seg === seg).length;
     const chip = (key, val, label) => `<button class="chip small" data-key="${key}" data-val="${val}" aria-pressed="${w[key] === val}">${label}</button>`;
-    $('sub').innerHTML = [chip('view', 'sig', 'Strategy signals'), chip('view', 'rsi', 'Monthly RSI &gt; 70'),
-      '<span class="sep"></span>', chip('seg', 'all', `All <span class="n">${n('all')}</span>`),
+    $('sub').innerHTML = [views, chip('seg', 'all', `All <span class="n">${n('all')}</span>`),
       ...SEGS.map((g) => chip('seg', g, `${g} <span class="n">${n(g)}</span>`)),
       ...(w.view === 'sig' ? ['<span class="sep"></span>', chip('tf', 'all', 'D + W'), chip('tf', 'W', 'Weekly'), chip('tf', 'D', 'Daily')] : []),
       `<input type="search" id="wq" placeholder="Search symbol or industry" value="${esc(w.q)}" aria-label="Search">`].join('');
     $('sub').querySelectorAll('[data-key]').forEach((b) => b.onclick = () => { w[b.dataset.key] = b.dataset.val; render(); });
+    $('sub').querySelectorAll('[data-wv]').forEach((b) => b.onclick = () => { w.view = b.dataset.wv; render(); });
     $('wq').oninput = (e) => { w.q = e.target.value; drawWide(); };
-    const sg = W.segments;
-    const tot = SEGS.reduce((a, g) => a + (sg[g] || 0), 0);
-    $('rule').innerHTML = `<b>${tot}</b> liquid NSE stocks outside the Nifty 500 (${esc(W.filter)}): ${SEGS.map((g) => `${sg[g] || 0} ${g}`).join(' · ')}${W.scanned < tot ? ` (${W.scanned} with Kite data scanned)` : ''}. `
-      + 'Index members keep NSE\'s tag (Micro = Nifty Microcap 250 and the rest); stocks in no index yet, mostly recent IPOs, are tagged by market cap (<span class="why">mcap</span>). '
-      + `Scanned on demand: candle <b>${esc(W.candle)}</b>, published ${esc(W.generated)}${W.week_forming ? ' — weekly signals can change until Friday\'s close' : ''}. ★ = focus (BUY + strong weekly/monthly RSI).`;
+    $('rule').innerHTML = wideNote();
     drawWide();
+  }
+
+  function wideNote() {
+    const W = S.wide, sg = W.segments;
+    const tot = SEGS.reduce((a, g) => a + (sg[g] || 0), 0);
+    return `<b>${tot}</b> liquid NSE stocks outside the Nifty 500 (${esc(W.filter)}): ${SEGS.map((g) => `${sg[g] || 0} ${g}`).join(' · ')}${W.scanned < tot ? ` (${W.scanned} with Kite data scanned)` : ''}. `
+      + 'Segments by today\'s market cap (Yahoo), the way AMFI ranks: Large = top 100, Mid = 101–250, Small = 251–500, Micro = the rest of this list. '
+      + `Scanned on demand: candle <b>${esc(W.candle)}</b>, published ${esc(W.generated)}${W.week_forming ? ' — weekly signals can change until Friday\'s close' : ''}. ★ = focus (BUY + strong weekly/monthly RSI).`;
   }
 
   function drawWide() {
     const W = S.wide, w = state.w, q = w.q.trim().toLowerCase();
     const keep = (r) => (w.seg === 'all' || r.seg === w.seg) && (!q || r.s.toLowerCase().includes(q) || (r.ind || '').toLowerCase().includes(q));
-    const segCell = (r) => `<td>${esc(r.seg)}${r.by === 'mcap' ? ' <span class="why">mcap</span>' : ''}${r.new ? ` <span class="why">listed ${esc(r.new.slice(5))}</span>` : ''}</td>`;
+    const segCell = (r) => `<td>${esc(r.seg)}${r.by === 'no mcap' ? ' <span class="why">no mcap</span>' : ''}${r.new ? ` <span class="why">listed ${esc(r.new.slice(5))}</span>` : ''}</td>`;
     const fl = [w.seg === 'all' ? '' : w.seg, q ? `"${w.q.trim()}"` : ''].filter(Boolean);
     if (w.view === 'rsi') {
       const rows = W.rsi.filter(keep);
