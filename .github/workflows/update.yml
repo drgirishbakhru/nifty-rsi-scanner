@@ -2,8 +2,7 @@ name: Strategy update
 
 # Started by the dashboard page's buttons ("Log in to Zerodha", "Update Intraday Swing", "Update everything",
 # "Update wider universe"),
-# by the "Run workflow" button on GitHub, and every hour in market hours (skipped quietly when there is no
-# Zerodha login that day). This repo is public, so its logs are too: the scripts print only short status lines.
+# and by the "Run workflow" button on GitHub. On demand only: nothing runs on a schedule. This repo is public, so its logs are too: the scripts print only short status lines.
 
 on:
   workflow_dispatch:
@@ -17,9 +16,6 @@ on:
         description: "Filled in by the page after a Zerodha login (leave empty)"
         required: false
         default: ""
-  schedule:
-    - cron: "46 4-9 * * 1-5"   # 10:16 to 15:16 IST, just after each 1-hour candle closes
-    - cron: "1 10 * * 1-5"     # 15:31 IST, after the day's last candle
 
 permissions:
   contents: write
