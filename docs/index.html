@@ -175,6 +175,7 @@
   let RSI_SUM = null;
   const state = { tab: 'focus', tf: 'W', rsiFilter: 'all', u: { seg: 'all', rsi: false, adx: false, q: '', k: 'mcap', dir: -1 },
                   w: { view: 'stocks', seg: 'Micro', tf: 'all', q: '' },
+                  t: { uni: 'n500', view: 'open', strat: 'all', tf: 'all', seg: 'all', q: '' },
                   wu: { seg: 'Micro', rsi: false, adx: false, q: '', k: 'mcap', dir: -1 } };
   let shown = [];          // [symbol, exchange] for the copy button
 
@@ -345,6 +346,7 @@
       if (S.oi) list.push(['oi', 'Nifty OI', 4 + S.oi.calls.length + S.oi.puts.length]);
       if (S.universe) list.push(['n500', 'Nifty 500', S.universe.length]);
       if (S.wide) list.push(['wide', 'Wider universe', S.wide.rows.filter((r) => r.sig === 'BUY').length]);
+      if (S.trades || (S.wide && S.wide.trades)) list.push(['trades', 'Trades', (S.trades ? S.trades.open.length : 0) + (S.wide && S.wide.trades ? S.wide.trades.open.length : 0)]);
     }
     list.push(['rsi', 'RSI > 70', RSI.filter((r) => r.exchange === 'NSE').length]);
     if (!list.some(([k]) => k === state.tab)) state.tab = list[0][0];
@@ -555,6 +557,64 @@
       rows.map((r) => `<tr class="${r.focus ? 'focus' : ''}">${symCell(r.s)}<td>${esc(r.strat.replace(' with ADX', ''))}</td><td>${r.tf}</td><td style="min-width:10rem">${pill(r.sig)}${r.focus ? ' ★' : ''}${r.why ? `<div class="why">${esc(r.why)}</div>` : ''}</td><td class="num">${fmt(r.sl)}</td><td class="num">${fmt(r.risk)}</td><td class="num">${fmt(r.close)}</td><td class="nowrap">${esc(r.since)}</td><td class="num">${pct(r.pnl)}</td>${techCells(U[r.s])}<td class="num">${fmt(r.mcap, 0)}</td>${segCell(r)}</tr>`));
   }
 
+  // Trade history, rebuilt on each publish by replaying the strategies over the saved candles
+  function viewTrades() {
+    const t = state.t, have = { n500: S.trades, wide: S.wide && S.wide.trades };
+    if (!have[t.uni]) t.uni = have.n500 ? 'n500' : 'wide';
+    const T = have[t.uni];
+    const chip = (key, val, label) => `<button class="chip small" data-key="${key}" data-val="${val}" aria-pressed="${t[key] === val}">${label}</button>`;
+    const segs = t.uni === 'wide' ? ['Large', 'Mid', 'Small', 'Micro'] : ['Large', 'Mid', 'Small'];
+    if (t.seg !== 'all' && !segs.includes(t.seg)) t.seg = 'all';
+    const sep = '<span class="sep"></span>';
+    $('sub').innerHTML = [
+      ...(have.n500 && have.wide ? [chip('uni', 'n500', 'Nifty 500'), chip('uni', 'wide', 'Wider universe'), sep] : []),
+      chip('view', 'open', `Open <span class="n">${T.open.length}</span>`), chip('view', 'closed', `Closed <span class="n">${T.closed.length}</span>`), sep,
+      chip('strat', 'all', 'Both strategies'), ...Object.entries(T.names).map(([k, n]) => chip('strat', k, esc(n.replace(' with ADX', '')))), sep,
+      chip('tf', 'all', 'D + W'), chip('tf', 'W', 'Weekly'), chip('tf', 'D', 'Daily'), sep,
+      chip('seg', 'all', 'All'), ...segs.map((g) => chip('seg', g, g)),
+      `<input type="search" id="tq" placeholder="Search symbol" value="${esc(t.q)}" aria-label="Search">`].join('');
+    $('sub').querySelectorAll('[data-key]').forEach((b) => b.onclick = () => { t[b.dataset.key] = b.dataset.val; render(); });
+    $('tq').oninput = (e) => { t.q = e.target.value; drawTrades(); };
+    drawTrades();
+  }
+
+  function drawTrades() {
+    const t = state.t, T = t.uni === 'wide' ? S.wide.trades : S.trades, q = t.q.trim().toLowerCase();
+    const keep = (r) => (t.strat === 'all' || r.k === t.strat) && (t.tf === 'all' || r.tf === t.tf)
+      && (t.seg === 'all' || r.seg === t.seg) && (!q || r.s.toLowerCase().includes(q));
+    const open = T.open.filter(keep), closed = T.closed.filter(keep);
+    // scorecard for what the filters select, one row per strategy and timeframe
+    const groups = [];
+    for (const k of Object.keys(T.names)) for (const tf of ['W', 'D']) {
+      if ((t.strat !== 'all' && k !== t.strat) || (t.tf !== 'all' && tf !== t.tf)) continue;
+      const c = closed.filter((r) => r.k === k && r.tf === tf && r.pnl != null).map((r) => r.pnl);
+      const o = open.filter((r) => r.k === k && r.tf === tf && r.pnl != null).map((r) => r.pnl);
+      const w = c.filter((x) => x > 0), l = c.filter((x) => x <= 0), sum = (a) => a.reduce((x, y) => x + y, 0);
+      groups.push(`<tr><td>${esc(T.names[k].replace(' with ADX', ''))}</td><td>${tf === 'W' ? 'Weekly' : 'Daily'}</td><td class="num">${c.length}</td>`
+        + `<td class="num">${c.length ? fmt(w.length / c.length * 100, 0) + '%' : '–'}</td><td class="num">${c.length ? pct(sum(c) / c.length) : '–'}</td>`
+        + `<td class="num">${w.length ? pct(sum(w) / w.length) : '–'}</td><td class="num">${l.length ? pct(sum(l) / l.length) : '–'}</td>`
+        + `<td class="num">${l.length && sum(l) < 0 ? fmt(sum(w) / -sum(l)) : '–'}</td><td class="num">${o.length}</td><td class="num">${o.length ? pct(sum(o) / o.length) : '–'}</td></tr>`);
+    }
+    $('rule').innerHTML = `<b>Scorecard</b>, closed trades since ${esc(T.since)} (${t.uni === 'wide' ? 'wider universe' : 'Nifty 500'}): P&amp;L on prices, fills at the next open, before costs. `
+      + 'These are the strategies\' own trades, rebuilt from the candles on each update, not your Zerodha fills. <b>PF</b> = profit factor (total gains ÷ total losses).'
+      + `<div class="box" style="max-height:none;margin-top:8px"><table><thead><tr><th>Strategy</th><th>TF</th><th class="num">Closed</th><th class="num">Win rate</th><th class="num">Avg trade</th><th class="num">Avg win</th><th class="num">Avg loss</th><th class="num">PF</th><th class="num">Open</th><th class="num">Avg open P&amp;L</th></tr></thead><tbody>${groups.join('')}</tbody></table></div>`;
+    const fl = [t.strat === 'all' ? '' : T.names[t.strat], t.tf === 'all' ? '' : (t.tf === 'W' ? 'Weekly' : 'Daily'), t.seg === 'all' ? '' : t.seg, q ? `"${t.q.trim()}"` : ''].filter(Boolean);
+    const sname = (k) => esc(T.names[k].replace(' with ADX', ''));
+    const dmy = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '';
+    if (t.view === 'open') {
+      shown = [...new Set(open.map((r) => r.s))].map((s) => [s]);
+      setCount(open.length, T.open.length, 'open trades', fl);
+      table([['Symbol'], ['Strategy'], ['TF'], ['Entry date'], ['Entry', 1], ['Close', 1], ['P&L %', 1], ['Stop', 1], ['Days', 1], ['Status'], ['Segment']],
+        open.map((r) => `<tr>${symCell(r.s)}<td>${sname(r.k)}</td><td>${r.tf}</td><td class="nowrap">${dmy(r.ed)}</td><td class="num">${fmt(r.ep)}</td><td class="num">${fmt(r.close)}</td><td class="num">${pct(r.pnl)}</td>`
+          + `<td class="num">${fmt(r.stop)}${r.how === 'close below' ? '<div class="why">close below</div>' : ''}</td><td class="num">${r.days}</td><td>${r.exiting ? pill('EXIT next open') : '<span class="pill open">open</span>'}</td><td>${esc(r.seg)}</td></tr>`));
+    } else {
+      shown = [...new Set(closed.map((r) => r.s))].map((s) => [s]);
+      setCount(closed.length, T.closed.length, `trades closed since ${T.since}`, fl);
+      table([['Symbol'], ['Strategy'], ['TF'], ['Entry date'], ['Entry', 1], ['Exit date'], ['Exit', 1], ['P&L %', 1], ['Days', 1], ['Exit reason'], ['Segment']],
+        closed.map((r) => `<tr>${symCell(r.s)}<td>${sname(r.k)}</td><td>${r.tf}</td><td class="nowrap">${dmy(r.ed)}</td><td class="num">${fmt(r.ep)}</td><td class="nowrap">${dmy(r.xd)}</td><td class="num">${fmt(r.xp)}</td><td class="num">${pct(r.pnl)}</td><td class="num">${r.days}</td><td class="why">${esc(r.why)}</td><td>${esc(r.seg)}</td></tr>`));
+    }
+  }
+
   function viewRsi() {
     subChips([['all', 'All NSE'], ['n500', 'Nifty 500'], ['fresh', 'Fresh monthly cross'], ['weekly', 'Weekly also > 70']], 'rsiFilter');
     $('rule').innerHTML = 'Monthly RSI(14) above 70 on the current month\'s candle (all NSE stocks, market cap ≥ ₹1,000 cr). <b>Fresh</b> = last month closed at or below 70.';
@@ -578,6 +638,7 @@
     else if (state.tab === 'rsi') viewRsi();
     else if (state.tab === 'n500') viewUniverse();
     else if (state.tab === 'wide') viewWide();
+    else if (state.tab === 'trades') viewTrades();
     else viewStrategy(state.tab);
     $('copy-note').textContent = '';
   }
