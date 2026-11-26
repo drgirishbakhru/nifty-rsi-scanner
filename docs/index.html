@@ -132,7 +132,7 @@
     <div class="controls">
       <a class="btn" id="kite-login" href="#">Log in to Zerodha</a>
       <button type="button" class="btn solid" id="upd-intraday">Update Intraday Swing</button>
-      <button type="button" class="btn" id="upd-full">Update everything</button>
+      <button type="button" class="btn" id="upd-full">Update Nifty 500</button>
       <button type="button" class="btn" id="upd-wide">Update wider universe</button>
     </div>
     <p class="note" id="upd-status" role="status" aria-live="polite"></p>
@@ -262,7 +262,7 @@
     if (!rt && !(await kiteLogin())) { say(await loginNote()); return; }
     setBusy(true);
     const t0 = Date.now();
-    const what = mode === 'login' ? 'Saving your Zerodha login' : mode === 'full' ? 'Updating everything (a few minutes)' : mode === 'wide' ? 'Updating the wider universe (first run ~15 minutes, later a few)' : 'Updating Intraday Swing';
+    const what = mode === 'login' ? 'Saving your Zerodha login' : mode === 'full' ? 'Updating the Nifty 500 (a few minutes)' : mode === 'wide' ? 'Updating the wider universe (first run ~15 minutes, later a few)' : 'Updating Intraday Swing';
     say(`${what}… starting.`);
     try {
       const r = await gh(`/repos/${KEY.repo}/actions/workflows/${KEY.workflow}/dispatches`, {
@@ -421,6 +421,17 @@
     table([['Level'], ['Strike', 1], ['']], rows);
   }
 
+  // Cells shared by the stock tables: RSI/ADX badges (green above 60 / 20), signed % and the volume bar
+  const badge = (v, lvl) => v == null ? '<span class="bdg">–</span>' : `<span class="bdg${v > lvl ? ' on' : ''}">${fmt(v, 0)}</span>`;
+  const signed = (v) => v == null ? '<span class="dim">–</span>' : `<span class="${v >= 0 ? 'up' : 'down'}">${v >= 0 ? '+' : ''}${fmt(v, 1)}%</span>`;
+  const plain = (v, d = 1) => v == null ? '<span class="dim">–</span>' : fmt(v, d);
+  const vol = (v) => v == null ? '<span class="dim">–</span>'
+    : `<span class="vol"><span class="vbar"><i class="${v >= VOL_HOT ? 'hot' : ''}" style="width:${Math.min(v, 300) / 3}%"></i></span><span class="${v >= VOL_HOT ? 'hi' : ''}">${fmt(v, 0)}%</span></span>`;
+  // RSI D·W·M, ADX D·W, volume 5d/30d and distance from monthly / quarterly EMA20, from a stock-table row
+  const TECH_COLS = [['RSI  D · W · M'], ['ADX  D · W'], ['Vol 5d / 30d'], ['vs M EMA20', 1], ['vs Q EMA20', 1]];
+  const techCells = (u) => u ? `<td class="nowrap">${badge(u.rd, 60)}${badge(u.rw, 60)}${badge(u.rm, 60)}</td><td class="nowrap">${badge(u.ad, 20)}${badge(u.aw, 20)}</td><td>${vol(u.vol)}</td><td class="num">${signed(u.dm)}</td><td class="num">${signed(u.dq)}</td>`
+    : '<td></td><td></td><td></td><td></td><td></td>';
+
   // Strong = RSI > 60 on at least 2 of D/W/M, ADX > 20 on daily or weekly, and 5-day volume >= 150% of the 30-day average
   const VOL_HOT = 150;
   const nRsi = (r) => [r.rd, r.rw, r.rm].filter((v) => v != null && v > 60).length;
@@ -479,14 +490,9 @@
     $('thead').querySelectorAll('th[data-k]').forEach((th) => th.onclick = () => {
       const key = th.dataset.k; if (u.k === key) u.dir = -u.dir; else { u.k = key; u.dir = key === 's' ? 1 : -1; } drawUniverse();
     });
-    const badge = (v, lvl) => v == null ? '<span class="bdg">–</span>' : `<span class="bdg${v > lvl ? ' on' : ''}">${fmt(v, 0)}</span>`;
-    const signed = (v) => v == null ? '<span class="dim">–</span>' : `<span class="${v >= 0 ? 'up' : 'down'}">${v >= 0 ? '+' : ''}${fmt(v, 1)}%</span>`;
-    const plain = (v, d = 1) => v == null ? '<span class="dim">–</span>' : fmt(v, d);
-    const vol = (v) => v == null ? '<span class="dim">–</span>'
-      : `<span class="vol"><span class="vbar"><i class="${v >= VOL_HOT ? 'hot' : ''}" style="width:${Math.min(v, 300) / 3}%"></i></span><span class="${v >= VOL_HOT ? 'hi' : ''}">${fmt(v, 0)}%</span></span>`;
     $('tbody').innerHTML = rows.length ? rows.map((r) => {
       const st = isStrong(r);
-      return `<tr class="${st ? 'focus' : ''}"><td class="sym stick">${st ? '★ ' : ''}<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(r.s))}" target="_blank" rel="noopener">${esc(r.s)}</a><div class="why">${esc(r.seg)}${wide && r.by === 'no mcap' ? ' · no mcap' : ''}${wide && r.new ? ` · listed ${esc(r.new.slice(5))}` : ''}</div></td>`
+      return `<tr class="${st ? 'focus' : ''}"><td class="sym stick">${st ? '★ ' : ''}<a href="https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym(r.s))}" target="_blank" rel="noopener">${esc(r.s)}</a><div class="why">${esc(r.seg)}${wide && r.new ? ` · listed ${esc(r.new.slice(5))}` : ''}</div></td>`
         + `<td class="num">${plain(r.mcap, 0)}</td><td class="num">${plain(r.price, 2)}</td><td class="num">${plain(r.pe)}</td><td class="num">${plain(r.ev)}</td>`
         + `<td class="num">${signed(r.g2)}</td><td class="num">${signed(r.dm)}</td><td class="num">${signed(r.dq)}</td>`
         + `<td class="nowrap">${badge(r.rd, 60)}${badge(r.rw, 60)}${badge(r.rm, 60)}</td><td class="nowrap">${badge(r.ad, 20)}${badge(r.aw, 20)}</td><td>${vol(r.vol)}</td></tr>`;
@@ -530,22 +536,23 @@
   function drawWide() {
     const W = S.wide, w = state.w, q = w.q.trim().toLowerCase();
     const keep = (r) => (w.seg === 'all' || r.seg === w.seg) && (!q || r.s.toLowerCase().includes(q) || (r.ind || '').toLowerCase().includes(q));
-    const segCell = (r) => `<td>${esc(r.seg)}${r.by === 'no mcap' ? ' <span class="why">no mcap</span>' : ''}${r.new ? ` <span class="why">listed ${esc(r.new.slice(5))}</span>` : ''}</td>`;
+    const U = Object.fromEntries((W.universe || []).map((u) => [u.s, u]));
+    const segCell = (r) => `<td>${esc(r.seg)}${r.new ? ` <span class="why">listed ${esc(r.new.slice(5))}</span>` : ''}</td>`;
     const fl = [w.seg === 'all' ? '' : w.seg, q ? `"${w.q.trim()}"` : ''].filter(Boolean);
     if (w.view === 'rsi') {
       const rows = W.rsi.filter(keep);
       shown = rows.map((r) => [r.s]);
       setCount(rows.length, W.rsi.length, 'stocks with monthly RSI > 70', fl);
-      table([['Symbol'], ['Monthly RSI', 1], ['Prev', 1], ['Weekly RSI', 1], ['Fresh'], ['Close', 1], ['Mcap ₹ cr', 1], ['Traded ₹ cr/day', 1], ['Segment'], ['Industry']],
-        rows.map((r) => `<tr>${symCell(r.s)}<td class="num">${rsiCell(r.rm)}</td><td class="num">${fmt(r.rmp, 1)}</td><td class="num">${rsiCell(r.rw)}</td><td>${r.mf ? '<span class="pill buy">fresh</span>' : ''}</td><td class="num">${fmt(r.close)}</td><td class="num">${fmt(r.mcap, 0)}</td><td class="num">${fmt(r.val, 1)}</td>${segCell(r)}<td class="why">${esc(r.ind)}</td></tr>`));
+      table([['Symbol'], ['Monthly RSI', 1], ['Prev', 1], ['Fresh'], ['Close', 1], ...TECH_COLS, ['Mcap ₹ cr', 1], ['Traded ₹ cr/day', 1], ['Segment'], ['Industry']],
+        rows.map((r) => `<tr>${symCell(r.s)}<td class="num">${rsiCell(r.rm)}</td><td class="num">${fmt(r.rmp, 1)}</td><td>${r.mf ? '<span class="pill buy">fresh</span>' : ''}</td><td class="num">${fmt(r.close)}</td>${techCells(U[r.s])}<td class="num">${fmt(r.mcap, 0)}</td><td class="num">${fmt(r.val, 1)}</td>${segCell(r)}<td class="why">${esc(r.ind)}</td></tr>`));
       return;
     }
     const rows = W.rows.filter((r) => (w.tf === 'all' || r.tf === w.tf) && keep(r));
     shown = [...new Set(rows.map((r) => r.s))].map((s) => [s]);
     const nb = rows.filter((r) => r.sig === 'BUY').length;
     setCount(rows.length, null, `signals (${nb} BUY · ${rows.length - nb} EXIT)`, fl);
-    table([['Symbol'], ['Strategy'], ['TF'], ['Signal'], ['SL', 1], ['Risk %', 1], ['Close', 1], ['RSI M', 1], ['RSI W', 1], ['In trade since'], ['P&L %', 1], ['Mcap ₹ cr', 1], ['Segment']],
-      rows.map((r) => `<tr class="${r.focus ? 'focus' : ''}">${symCell(r.s)}<td>${esc(r.strat.replace(' with ADX', ''))}</td><td>${r.tf}</td><td>${pill(r.sig)}${r.focus ? ' ★' : ''}${r.why ? `<div class="why">${esc(r.why)}</div>` : ''}</td><td class="num">${fmt(r.sl)}</td><td class="num">${fmt(r.risk)}</td><td class="num">${fmt(r.close)}</td><td class="num">${rsiCell(r.rm)}</td><td class="num">${rsiCell(r.rw)}</td><td>${esc(r.since)}</td><td class="num">${pct(r.pnl)}</td><td class="num">${fmt(r.mcap, 0)}</td>${segCell(r)}</tr>`));
+    table([['Symbol'], ['Strategy'], ['TF'], ['Signal'], ['SL', 1], ['Risk %', 1], ['Close', 1], ['In trade since'], ['P&L %', 1], ...TECH_COLS, ['Mcap ₹ cr', 1], ['Segment']],
+      rows.map((r) => `<tr class="${r.focus ? 'focus' : ''}">${symCell(r.s)}<td>${esc(r.strat.replace(' with ADX', ''))}</td><td>${r.tf}</td><td style="min-width:10rem">${pill(r.sig)}${r.focus ? ' ★' : ''}${r.why ? `<div class="why">${esc(r.why)}</div>` : ''}</td><td class="num">${fmt(r.sl)}</td><td class="num">${fmt(r.risk)}</td><td class="num">${fmt(r.close)}</td><td class="nowrap">${esc(r.since)}</td><td class="num">${pct(r.pnl)}</td>${techCells(U[r.s])}<td class="num">${fmt(r.mcap, 0)}</td>${segCell(r)}</tr>`));
   }
 
   function viewRsi() {
