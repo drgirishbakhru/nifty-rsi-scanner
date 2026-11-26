@@ -175,7 +175,7 @@
   let RSI_SUM = null;
   const state = { tab: 'focus', tf: 'W', rsiFilter: 'all', u: { seg: 'all', rsi: false, adx: false, q: '', k: 'mcap', dir: -1 },
                   w: { view: 'stocks', seg: 'Micro', tf: 'all', q: '' },
-                  t: { uni: 'n500', view: 'open', strat: 'all', tf: 'all', seg: 'all', q: '' },
+                  t: { uni: 'n500', view: 'open', strat: 'all', tf: 'all', seg: 'all', q: '', sk: '', sdir: 1 },
                   wu: { seg: 'Micro', rsi: false, adx: false, q: '', k: 'mcap', dir: -1 } };
   let shown = [];          // [symbol, exchange] for the copy button
 
@@ -573,7 +573,7 @@
       chip('tf', 'all', 'D + W'), chip('tf', 'W', 'Weekly'), chip('tf', 'D', 'Daily'), sep,
       chip('seg', 'all', 'All'), ...segs.map((g) => chip('seg', g, g)),
       `<input type="search" id="tq" placeholder="Search symbol" value="${esc(t.q)}" aria-label="Search">`].join('');
-    $('sub').querySelectorAll('[data-key]').forEach((b) => b.onclick = () => { t[b.dataset.key] = b.dataset.val; render(); });
+    $('sub').querySelectorAll('[data-key]').forEach((b) => b.onclick = () => { if (b.dataset.key === 'view') t.sk = ''; t[b.dataset.key] = b.dataset.val; render(); });
     $('tq').oninput = (e) => { t.q = e.target.value; drawTrades(); };
     drawTrades();
   }
@@ -590,28 +590,47 @@
       const c = closed.filter((r) => r.k === k && r.tf === tf && r.pnl != null).map((r) => r.pnl);
       const o = open.filter((r) => r.k === k && r.tf === tf && r.pnl != null).map((r) => r.pnl);
       const w = c.filter((x) => x > 0), l = c.filter((x) => x <= 0), sum = (a) => a.reduce((x, y) => x + y, 0);
+      const a = c.concat(o), aw = sum(a.filter((x) => x > 0)), al = -sum(a.filter((x) => x <= 0));
+      const F = (T.full || {})[`${k}|${tf}|${t.seg}`] || {};
       groups.push(`<tr><td>${esc(T.names[k].replace(' with ADX', ''))}</td><td>${tf === 'W' ? 'Weekly' : 'Daily'}</td><td class="num">${c.length}</td>`
         + `<td class="num">${c.length ? fmt(w.length / c.length * 100, 0) + '%' : '–'}</td><td class="num">${c.length ? pct(sum(c) / c.length) : '–'}</td>`
         + `<td class="num">${w.length ? pct(sum(w) / w.length) : '–'}</td><td class="num">${l.length ? pct(sum(l) / l.length) : '–'}</td>`
-        + `<td class="num">${l.length && sum(l) < 0 ? fmt(sum(w) / -sum(l)) : '–'}</td><td class="num">${o.length}</td><td class="num">${o.length ? pct(sum(o) / o.length) : '–'}</td></tr>`);
+        + `<td class="num">${l.length && sum(l) < 0 ? fmt(sum(w) / -sum(l)) : '–'}</td><td class="num">${o.length}</td><td class="num">${o.length ? pct(sum(o) / o.length) : '–'}</td>`
+        + `<td class="num"><b>${al > 0 ? fmt(aw / al) : '–'}</b></td>`
+        + `<td class="num" style="border-left:1px solid var(--line)">${F.n ?? '–'}</td><td class="num">${F.win != null ? fmt(F.win, 0) + '%' : '–'}</td><td class="num">${F.avg != null ? pct(F.avg) : '–'}</td><td class="num"><b>${F.pf != null ? fmt(F.pf) : '–'}</b></td></tr>`);
     }
-    $('rule').innerHTML = `<b>Scorecard</b>, closed trades since ${esc(T.since)} (${t.uni === 'wide' ? 'wider universe' : 'Nifty 500'}): P&amp;L on prices, fills at the next open, before costs. `
-      + 'These are the strategies\' own trades, rebuilt from the candles on each update, not your Zerodha fills. <b>PF</b> = profit factor (total gains ÷ total losses).'
-      + `<div class="box" style="max-height:none;margin-top:8px"><table><thead><tr><th>Strategy</th><th>TF</th><th class="num">Closed</th><th class="num">Win rate</th><th class="num">Avg trade</th><th class="num">Avg win</th><th class="num">Avg loss</th><th class="num">PF</th><th class="num">Open</th><th class="num">Avg open P&amp;L</th></tr></thead><tbody>${groups.join('')}</tbody></table></div>`;
+    $('rule').innerHTML = `<b>Scorecard</b> (${t.uni === 'wide' ? 'wider universe' : 'Nifty 500'}${t.seg === 'all' ? '' : ', ' + esc(t.seg)}). P&amp;L on prices, fills at the next open, before costs; the strategies\' own trades, not your Zerodha fills. <b>PF</b> = profit factor (total gains ÷ total losses). `
+      + `<b>Read the last 12 months with care:</b> trend trades that are winning stay open for months, so "closed" in a short window is mostly the losers. <b>PF incl. open</b> counts today's open trades at the latest close. `
+      + `<b>Since ${esc(T.full_since || '')}</b> = every closed trade in the full history, comparable to a TradingView backtest${q ? ' (search not applied)' : ''}.`
+      + `<div class="box" style="max-height:none;margin-top:8px"><table><thead><tr><th>Strategy</th><th>TF</th><th class="num">Closed 12m</th><th class="num">Win rate</th><th class="num">Avg trade</th><th class="num">Avg win</th><th class="num">Avg loss</th><th class="num">PF</th><th class="num">Open</th><th class="num">Avg open P&amp;L</th><th class="num">PF incl. open</th>`
+      + `<th class="num" style="border-left:1px solid var(--line)">Since ${esc(T.full_since || '')}</th><th class="num">Win rate</th><th class="num">Avg trade</th><th class="num">PF</th></tr></thead><tbody>${groups.join('')}</tbody></table></div>`;
     const fl = [t.strat === 'all' ? '' : T.names[t.strat], t.tf === 'all' ? '' : (t.tf === 'W' ? 'Weekly' : 'Daily'), t.seg === 'all' ? '' : t.seg, q ? `"${t.q.trim()}"` : ''].filter(Boolean);
     const sname = (k) => esc(T.names[k].replace(' with ADX', ''));
     const dmy = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '';
+    const sortBy = (rows) => {
+      if (!t.sk) return rows;
+      const v = (r) => r[t.sk];
+      return rows.slice().sort((a, b) => { const x = v(a), y = v(b); if (x == null) return 1; if (y == null) return -1;
+        return typeof x === 'string' ? t.sdir * x.localeCompare(y) : t.sdir * (x - y); });
+    };
+    const sortable = (cols) => {   // [label, key, numeric]: click a header to sort, again to reverse
+      $('thead').innerHTML = '<tr>' + cols.map(([l, key, n]) => `<th class="${n ? 'num' : ''}${key === t.sk ? ' sorted' : ''}" data-k="${key}">${l}${key === t.sk ? (t.sdir < 0 ? ' ↓' : ' ↑') : ''}</th>`).join('') + '</tr>';
+      $('thead').querySelectorAll('th[data-k]').forEach((th) => th.onclick = () => {
+        const key = th.dataset.k; if (t.sk === key) t.sdir = -t.sdir; else { t.sk = key; t.sdir = key === 'pnl' ? 1 : key === 's' || key === 'k' ? 1 : -1; } drawTrades(); });
+    };
     if (t.view === 'open') {
-      shown = [...new Set(open.map((r) => r.s))].map((s) => [s]);
+      const rowsO = sortBy(open);
+      shown = [...new Set(rowsO.map((r) => r.s))].map((s) => [s]);
       setCount(open.length, T.open.length, 'open trades', fl);
-      table([['Symbol'], ['Strategy'], ['TF'], ['Entry date'], ['Entry', 1], ['Close', 1], ['P&L %', 1], ['Stop', 1], ['Days', 1], ['Status'], ['Segment']],
-        open.map((r) => `<tr>${symCell(r.s)}<td>${sname(r.k)}</td><td>${r.tf}</td><td class="nowrap">${dmy(r.ed)}</td><td class="num">${fmt(r.ep)}</td><td class="num">${fmt(r.close)}</td><td class="num">${pct(r.pnl)}</td>`
+      table(Array(11).fill(['']), rowsO.map((r) => `<tr>${symCell(r.s)}<td>${sname(r.k)}</td><td>${r.tf}</td><td class="nowrap">${dmy(r.ed)}</td><td class="num">${fmt(r.ep)}</td><td class="num">${fmt(r.close)}</td><td class="num">${pct(r.pnl)}</td>`
           + `<td class="num">${fmt(r.stop)}${r.how === 'close below' ? '<div class="why">close below</div>' : ''}</td><td class="num">${r.days}</td><td>${r.exiting ? pill('EXIT next open') : '<span class="pill open">open</span>'}</td><td>${esc(r.seg)}</td></tr>`));
+      sortable([['Symbol', 's'], ['Strategy', 'k'], ['TF', 'tf'], ['Entry date', 'ed'], ['Entry', 'ep', 1], ['Close', 'close', 1], ['P&L %', 'pnl', 1], ['Stop', 'stop', 1], ['Days', 'days', 1], ['Status', 'exiting'], ['Segment', 'seg']]);
     } else {
-      shown = [...new Set(closed.map((r) => r.s))].map((s) => [s]);
+      const rowsC = sortBy(closed);
+      shown = [...new Set(rowsC.map((r) => r.s))].map((s) => [s]);
       setCount(closed.length, T.closed.length, `trades closed since ${T.since}`, fl);
-      table([['Symbol'], ['Strategy'], ['TF'], ['Entry date'], ['Entry', 1], ['Exit date'], ['Exit', 1], ['P&L %', 1], ['Days', 1], ['Exit reason'], ['Segment']],
-        closed.map((r) => `<tr>${symCell(r.s)}<td>${sname(r.k)}</td><td>${r.tf}</td><td class="nowrap">${dmy(r.ed)}</td><td class="num">${fmt(r.ep)}</td><td class="nowrap">${dmy(r.xd)}</td><td class="num">${fmt(r.xp)}</td><td class="num">${pct(r.pnl)}</td><td class="num">${r.days}</td><td class="why">${esc(r.why)}</td><td>${esc(r.seg)}</td></tr>`));
+      table(Array(11).fill(['']), rowsC.map((r) => `<tr>${symCell(r.s)}<td>${sname(r.k)}</td><td>${r.tf}</td><td class="nowrap">${dmy(r.ed)}</td><td class="num">${fmt(r.ep)}</td><td class="nowrap">${dmy(r.xd)}</td><td class="num">${fmt(r.xp)}</td><td class="num">${pct(r.pnl)}</td><td class="num">${r.days}</td><td class="why">${esc(r.why)}</td><td>${esc(r.seg)}</td></tr>`));
+      sortable([['Symbol', 's'], ['Strategy', 'k'], ['TF', 'tf'], ['Entry date', 'ed'], ['Entry', 'ep', 1], ['Exit date', 'xd'], ['Exit', 'xp', 1], ['P&L %', 'pnl', 1], ['Days', 'days', 1], ['Exit reason', 'why'], ['Segment', 'seg']]);
     }
   }
 
